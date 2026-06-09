@@ -107,11 +107,13 @@ pip install -r requirements.txt
 
 | 显存 | Qwen3-VL 建议上限 | Qwen3.5 建议上限 | 建议设置 |
 | --- | --- | --- | --- |
-| 8GB | 4B | 4B 或 9B | 优先使用 `4bit`，视频帧数控制在 16 到 32 帧 |
+| 8GB | 4B | 4B 或 9B | 优先使用 `4bit`，视频帧数建议控制在 16 到 32 帧 |
 | 16GB | 8B | 9B 或 27B | 优先使用 `4bit`，多图和视频任务减少帧数 |
 | 24GB | 8B | 27B 或 35B-A3B | 优先使用 `4bit`，复杂视频任务继续控制帧数 |
 
 实际能否运行还取决于分辨率、输入图片数量、视频帧数、系统占用、PyTorch 版本和量化库兼容情况。
+
+视频节点里的 `最大帧数` 参数默认值是 32，参数上限是 512。README 中出现的 32 帧只是适合 8GB 显存起步测试的建议值，不是节点功能上限。
 
 ### 模型选择与模型目录
 
@@ -191,7 +193,7 @@ Load Image -> QwenVL-Smit 图片理解
 ```text
 Load Video frames as IMAGE batch -> QwenVL-Smit 视频理解
 任务类型: 图像描述
-最大帧数: 32
+最大帧数: 32  # 示例值，可按显存和输入帧数调高
 提示词: 总结这个视频的时间线。
 ```
 
@@ -334,11 +336,13 @@ The default model dropdown avoids very large models that are unrealistic for mos
 
 | VRAM | Qwen3-VL practical maximum | Qwen3.5 practical maximum | Suggested settings |
 | --- | --- | --- | --- |
-| 8GB | 4B | 4B or 9B | Prefer `4bit`; keep video around 16 to 32 frames |
+| 8GB | 4B | 4B or 9B | Prefer `4bit`; recommended video range is 16 to 32 frames |
 | 16GB | 8B | 9B or 27B | Prefer `4bit`; reduce image count and video frames |
 | 24GB | 8B | 27B or 35B-A3B | Prefer `4bit`; still reduce frames for complex video tasks |
 
 Actual usability depends on resolution, image count, video frame count, system memory usage, PyTorch version, and quantization compatibility.
+
+The `最大帧数` parameter defaults to 32 and can be set up to 512. The 32-frame value shown in examples is a starting recommendation for 8GB GPUs, not a hard node limit.
 
 ### Model Folders
 
