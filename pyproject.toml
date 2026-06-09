@@ -21,6 +21,10 @@ dependencies = [
   "safetensors>=0.4.5",
 ]
 
+[project.optional-dependencies]
+modelscope = ["modelscope>=1.20.0"]
+quantization = ["bitsandbytes>=0.45.0"]
+
 [project.urls]
 Homepage = "https://github.com/jiuman994/Qwenvl-Smit"
 Repository = "https://github.com/jiuman994/Qwenvl-Smit"
