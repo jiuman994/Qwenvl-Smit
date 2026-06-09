@@ -2,7 +2,11 @@ import gc
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
@@ -31,6 +35,7 @@ DEFAULT_QWEN35_MODEL = "Qwen/Qwen3.5-4B"
 DEFAULT_IMAGE_MIN_PIXELS = 3136
 DEFAULT_IMAGE_MAX_PIXELS = 1003520
 DEFAULT_VIDEO_MAX_PIXELS = 200704
+MMPROJ_FILENAME = "mmproj-BF16.gguf"
 
 MODEL_PRESETS = [
     "Qwen/Qwen3-VL-4B-Instruct",
@@ -49,6 +54,26 @@ QWEN35_MODEL_PRESETS = [
     "Qwen/Qwen3.5-27B",
     "Qwen/Qwen3.5-35B-A3B",
 ]
+
+QWEN35_GGUF_MODELS = {
+    "Qwen3.5-4B": "unsloth/Qwen3.5-4B-GGUF",
+    "Qwen3.5-9B": "unsloth/Qwen3.5-9B-GGUF",
+    "Qwen3.5-27B": "unsloth/Qwen3.5-27B-GGUF",
+}
+
+QWEN35_GGUF_QUANTS = [
+    "Q4_K_XL",
+    "Q4_K_M",
+    "Q5_K_XL",
+    "Q5_K_M",
+    "Q6_K",
+    "Q6_K_XL",
+    "Q8_0",
+    "Q8_K_XL",
+    "BF16",
+]
+
+QWEN35_GGUF_DYNAMIC_QUANTS = {"Q2_K_XL", "Q3_K_XL", "Q4_K_XL", "Q5_K_XL", "Q6_K_XL", "Q8_K_XL"}
 
 TASK_PRESETS = {
     "自定义": "",
@@ -505,7 +530,8 @@ def _raise_transformers_load_error(exc: Exception, model_id: str) -> None:
             "但当前 ComfyUI Python 环境中的 transformers 还不认识该模型架构。\n\n"
             "处理方式：\n"
             "1. 先尝试升级 transformers：python -m pip install -U transformers\n"
-            "2. 如果仍然报 qwen3_5 不识别，说明当前正式版 transformers 还没包含该架构，"
+            "2. 如果仍然报 qwen3_5 不识别，说明当前正式版 transformers 还没包含该架构。"
+            "参考实现需要 Transformers 5.x 级别的 Qwen3.5 支持，"
             "需要安装源码版：python -m pip install -U git+https://github.com/huggingface/transformers.git\n"
             "3. 安装完成后必须完全重启 ComfyUI。\n\n"
             "便携包用户请使用 ComfyUI 自带的 Python 执行上面的 pip 命令，不要用系统 Python。\n\n"
@@ -708,6 +734,168 @@ def _select_frames(images: List[Image.Image], max_frames: int) -> List[Image.Ima
         return images
     indexes = np.linspace(0, len(images) - 1, max_frames).round().astype(int).tolist()
     return [images[i] for i in indexes]
+
+
+def _save_temp_image(image: Image.Image) -> str:
+    fd, path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    image.save(path, format="PNG")
+    return path
+
+
+def _gguf_model_dir(model_name: str) -> Path:
+    base = Path(_models_dir()) / "LLM" / f"{model_name}-GGUF"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _gguf_filename(model_name: str, quantization: str) -> str:
+    prefix = "UD-" if quantization in QWEN35_GGUF_DYNAMIC_QUANTS else ""
+    return f"{model_name}-{prefix}{quantization}.gguf"
+
+
+def _find_llama_mtmd_cli(cli_path: str) -> str:
+    cli_path = (cli_path or "").strip().strip('"')
+    if cli_path:
+        if os.path.isfile(cli_path):
+            return cli_path
+        raise FileNotFoundError(f"找不到 llama-mtmd-cli：{cli_path}")
+
+    for name in ["llama-mtmd-cli.exe", "llama-mtmd-cli"]:
+        found = shutil.which(name)
+        if found:
+            return found
+
+    candidates = [
+        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "Release" / "llama-mtmd-cli.exe",
+        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "llama-mtmd-cli.exe",
+        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "Release" / "llama-mtmd-cli",
+        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "llama-mtmd-cli",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    raise FileNotFoundError(
+        "未找到 llama-mtmd-cli。GGUF 节点需要单独编译 llama.cpp 的 multimodal CLI，"
+        "或在节点的 `llama路径` 输入中填写 llama-mtmd-cli.exe 的完整路径。"
+    )
+
+
+def _download_gguf_file(repo_id: str, filename: str, model_dir: Path) -> Path:
+    path = model_dir / filename
+    if path.exists():
+        return path
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as exc:
+        raise RuntimeError("下载 GGUF 需要 huggingface_hub，请先安装 requirements.txt。") from exc
+
+    endpoint = os.environ.get("QWENVL_SMIT_HF_ENDPOINT") or os.environ.get("HF_ENDPOINT")
+    print(f"[QwenVL-Smit] Downloading GGUF {filename} from {repo_id}")
+    kwargs = {
+        "repo_id": repo_id,
+        "filename": filename,
+        "local_dir": str(model_dir),
+    }
+    if endpoint:
+        kwargs["endpoint"] = endpoint
+    try:
+        hf_hub_download(**kwargs)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Qwen3.5 GGUF 文件下载失败：{repo_id}/{filename}\n"
+            "可以手动下载该 GGUF 文件和 mmproj-BF16.gguf，并放到：\n"
+            f"{model_dir}\n\n"
+            f"原始错误：{type(exc).__name__}: {exc}"
+        ) from exc
+    return path
+
+
+def _ensure_qwen35_gguf(model_name: str, quantization: str) -> tuple[Path, Path]:
+    repo_id = QWEN35_GGUF_MODELS[model_name]
+    model_dir = _gguf_model_dir(model_name)
+    model_path = _download_gguf_file(repo_id, _gguf_filename(model_name, quantization), model_dir)
+    mmproj_path = _download_gguf_file(repo_id, MMPROJ_FILENAME, model_dir)
+    return model_path, mmproj_path
+
+
+def _extract_thinking(text: str) -> tuple[str, str]:
+    text = text or ""
+    thinking = ""
+    match = re.search(r"<think[^>]*>(.*?)</think>", text, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        thinking = match.group(1).strip()
+        text = re.sub(r"<think[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    elif "</think>" in text:
+        parts = text.split("</think>", 1)
+        thinking = parts[0].strip()
+        text = parts[1].strip()
+    return text.strip(), thinking
+
+
+def _run_qwen35_gguf(
+    cli_path: str,
+    model_path: Path,
+    mmproj_path: Path,
+    prompt: str,
+    system_prompt: str,
+    image_path: str,
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    repeat_penalty: float,
+    gpu_layers: int,
+    context_size: int,
+    thinking: bool,
+    seed: int,
+) -> str:
+    cmd = [
+        cli_path,
+        "-m",
+        str(model_path),
+        "--mmproj",
+        str(mmproj_path),
+        "-n",
+        str(max_tokens),
+        "--temp",
+        str(temperature),
+        "--top-p",
+        str(top_p),
+        "--top-k",
+        str(top_k),
+        "--repeat-penalty",
+        str(repeat_penalty),
+        "-ngl",
+        str(gpu_layers),
+        "-c",
+        str(context_size),
+        "--seed",
+        str(seed),
+    ]
+    if image_path:
+        cmd.extend(["--image", image_path])
+
+    think_prefix = "/think" if thinking else "/no_think"
+    if system_prompt and system_prompt.strip():
+        full_prompt = f"{system_prompt.strip()}\n\n{think_prefix}\n{prompt}"
+    else:
+        full_prompt = f"{think_prefix}\n{prompt}"
+    cmd.extend(["-p", full_prompt])
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=600,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"Qwen3.5 GGUF 推理失败，退出码 {result.returncode}：\n{stderr[-2000:]}")
+    return result.stdout or ""
 
 
 def _combine_prompt(task_preset: str, prompt: str, force_json: bool) -> str:
@@ -1489,12 +1677,106 @@ class QwenVLSmitUnload:
         return ("QwenVL-Smit 模型缓存已清理。",)
 
 
+class Qwen35SmitGGUF:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "模型": (list(QWEN35_GGUF_MODELS.keys()), {"default": "Qwen3.5-9B"}),
+                "GGUF量化": (QWEN35_GGUF_QUANTS, {"default": "Q4_K_XL"}),
+                "提示词": (
+                    "STRING",
+                    {"default": "请详细描述这张图片。", "multiline": True},
+                ),
+                "系统提示词": ("STRING", {"default": "", "multiline": True}),
+                "最大输出Token": ("INT", {"default": 2048, "min": 64, "max": 32768, "step": 64}),
+                "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
+                "核采样": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "TopK": ("INT", {"default": 20, "min": 1, "max": 100, "step": 1}),
+                "重复惩罚": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05}),
+                "GPU层数": ("INT", {"default": 99, "min": -1, "max": 200, "step": 1}),
+                "上下文长度": ("INT", {"default": 8192, "min": 1024, "max": 131072, "step": 1024}),
+                "思考模式": ("BOOLEAN", {"default": False}),
+                "随机种子": ("INT", {"default": 1, "min": 1, "max": 2**32 - 1}),
+                "llama路径": ("STRING", {"default": ""}),
+            },
+            "optional": {
+                "图片": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("文本", "思考内容", "模型信息")
+    FUNCTION = "analyze"
+    CATEGORY = NODE_CATEGORY
+
+    def analyze(
+        self,
+        模型,
+        GGUF量化,
+        提示词,
+        系统提示词,
+        最大输出Token,
+        温度,
+        核采样,
+        TopK,
+        重复惩罚,
+        GPU层数,
+        上下文长度,
+        思考模式,
+        随机种子,
+        llama路径,
+        图片=None,
+    ):
+        cli = _find_llama_mtmd_cli(llama路径)
+        model_path, mmproj_path = _ensure_qwen35_gguf(模型, GGUF量化)
+        image_path = ""
+        try:
+            images = _collect_pil_images(图片)
+            if images:
+                image_path = _save_temp_image(images[0])
+            raw = _run_qwen35_gguf(
+                cli,
+                model_path,
+                mmproj_path,
+                提示词,
+                系统提示词,
+                image_path,
+                最大输出Token,
+                温度,
+                核采样,
+                TopK,
+                重复惩罚,
+                GPU层数,
+                上下文长度,
+                思考模式,
+                随机种子,
+            )
+        finally:
+            if image_path:
+                try:
+                    os.remove(image_path)
+                except Exception:
+                    pass
+
+        text, thinking = _extract_thinking(raw)
+        info = (
+            f"GGUF模型: {模型}\n"
+            f"量化: {GGUF量化}\n"
+            f"模型文件: {model_path}\n"
+            f"mmproj: {mmproj_path}\n"
+            f"llama-mtmd-cli: {cli}"
+        )
+        return (text, thinking, info)
+
+
 NODE_CLASS_MAPPINGS = {
     "QwenVLSmitImage": QwenVLSmitImage,
     "QwenVLSmitVideo": QwenVLSmitVideo,
     "Qwen35SmitChat": Qwen35SmitChat,
     "Qwen35SmitImage": Qwen35SmitImage,
     "Qwen35SmitVideo": Qwen35SmitVideo,
+    "Qwen35SmitGGUF": Qwen35SmitGGUF,
     "QwenVLSmitPromptPreset": QwenVLSmitPromptPreset,
     "QwenVLSmitUnload": QwenVLSmitUnload,
 }
@@ -1505,6 +1787,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Qwen35SmitChat": "Qwen3.5-Smit 文本对话",
     "Qwen35SmitImage": "Qwen3.5-Smit 图片理解",
     "Qwen35SmitVideo": "Qwen3.5-Smit 视频理解",
+    "Qwen35SmitGGUF": "Qwen3.5-Smit GGUF理解",
     "QwenVLSmitPromptPreset": "QwenVL-Smit 提示词预设",
     "QwenVLSmitUnload": "QwenVL-Smit 清理缓存",
 }
