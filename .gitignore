@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.log
+workflow_outputs/
