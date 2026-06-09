@@ -8,3 +8,6 @@ safetensors>=0.4.5
 
 # Optional, recommended for 8GB GPUs when your Python/CUDA build supports it:
 # bitsandbytes>=0.45.0
+
+# Optional, enables ModelScope-first downloads when your Python build supports it:
+# modelscope>=1.20.0
