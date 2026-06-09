@@ -251,6 +251,24 @@ ComfyUI/models/LLM/Qwen-VL/模型文件夹
 ComfyUI/models/LLM/Qwen3.5/模型文件夹
 ```
 
+### Qwen3.5 架构兼容
+
+如果模型已经下载完成，但运行时出现 `model type qwen3_5` 或 `Transformers does not recognize this architecture`，这通常不是 ComfyUI 没刷新模型目录导致的。它表示当前 ComfyUI Python 环境里的 Transformers 还不认识 Qwen3.5 的模型架构。
+
+可以先尝试：
+
+```bash
+python -m pip install -U transformers
+```
+
+如果正式版 Transformers 仍然不支持该架构，需要安装 Transformers 源码版：
+
+```bash
+python -m pip install -U git+https://github.com/huggingface/transformers.git
+```
+
+安装完成后，请完全重启 ComfyUI。便携包用户必须使用 ComfyUI 自带的 Python 执行 pip 命令，不要使用系统 Python。
+
 ### 模型来源与声明
 
 本项目只是 ComfyUI 节点适配层，不包含任何 Qwen 模型权重。
@@ -453,6 +471,24 @@ set QWENVL_SMIT_DOWNLOAD_SOURCE=huggingface
 ComfyUI/models/LLM/Qwen-VL/model-folder
 ComfyUI/models/LLM/Qwen3.5/model-folder
 ```
+
+### Qwen3.5 Architecture Support
+
+If the model is already downloaded but the error mentions `model type qwen3_5` or `Transformers does not recognize this architecture`, this is usually not a ComfyUI model-folder refresh issue. It means the Transformers package inside the ComfyUI Python environment does not yet support the Qwen3.5 architecture.
+
+Try:
+
+```bash
+python -m pip install -U transformers
+```
+
+If the release version still does not support the architecture, install Transformers from source:
+
+```bash
+python -m pip install -U git+https://github.com/huggingface/transformers.git
+```
+
+Restart ComfyUI completely after installation. Portable users should run pip with the Python bundled with their ComfyUI package, not with system Python.
 
 ### Credits
 
