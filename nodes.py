@@ -2,11 +2,7 @@ import gc
 import json
 import os
 import re
-import shutil
-import subprocess
-import tempfile
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
@@ -31,11 +27,9 @@ except Exception:  # pragma: no cover - Allows basic import outside ComfyUI.
 NODE_CATEGORY = "QwenVL-Smit"
 DEFAULT_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
 LEGACY_QWENVL_DIR = os.path.join("LLM", "Qwen-VL")
-DEFAULT_QWEN35_MODEL = "Qwen/Qwen3.5-4B"
 DEFAULT_IMAGE_MIN_PIXELS = 3136
 DEFAULT_IMAGE_MAX_PIXELS = 1003520
 DEFAULT_VIDEO_MAX_PIXELS = 200704
-MMPROJ_FILENAME = "mmproj-BF16.gguf"
 
 MODEL_PRESETS = [
     "Qwen/Qwen3-VL-4B-Instruct",
@@ -47,33 +41,6 @@ MODEL_PRESETS = [
     "Qwen/Qwen3-VL-8B-Instruct-FP8",
     "Qwen/Qwen3-VL-8B-Thinking-FP8",
 ]
-
-QWEN35_MODEL_PRESETS = [
-    "Qwen/Qwen3.5-4B",
-    "Qwen/Qwen3.5-9B",
-    "Qwen/Qwen3.5-27B",
-    "Qwen/Qwen3.5-35B-A3B",
-]
-
-QWEN35_GGUF_MODELS = {
-    "Qwen3.5-4B": "unsloth/Qwen3.5-4B-GGUF",
-    "Qwen3.5-9B": "unsloth/Qwen3.5-9B-GGUF",
-    "Qwen3.5-27B": "unsloth/Qwen3.5-27B-GGUF",
-}
-
-QWEN35_GGUF_QUANTS = [
-    "Q4_K_XL",
-    "Q4_K_M",
-    "Q5_K_XL",
-    "Q5_K_M",
-    "Q6_K",
-    "Q6_K_XL",
-    "Q8_0",
-    "Q8_K_XL",
-    "BF16",
-]
-
-QWEN35_GGUF_DYNAMIC_QUANTS = {"Q2_K_XL", "Q3_K_XL", "Q4_K_XL", "Q5_K_XL", "Q6_K_XL", "Q8_K_XL"}
 
 TASK_PRESETS = {
     "自定义": "",
@@ -92,7 +59,6 @@ TASK_PRESETS = {
 }
 
 MODEL_CACHE: Dict[str, "QwenVLModelBundle"] = {}
-QWEN35_CACHE: Dict[str, "Qwen35ModelBundle"] = {}
 
 
 def _register_model_dirs():
@@ -113,16 +79,6 @@ _register_model_dirs()
 
 @dataclass
 class QwenVLModelBundle:
-    model: Any
-    processor: Any
-    model_id: str
-    dtype: str
-    device_map: str
-    quantization: str
-
-
-@dataclass
-class Qwen35ModelBundle:
     model: Any
     processor: Any
     model_id: str
@@ -166,12 +122,6 @@ def _primary_qwen_vl_models_dir() -> str:
     return path
 
 
-def _primary_qwen35_models_dir() -> str:
-    path = os.path.join(_models_dir(), "LLM", "Qwen3.5")
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
 def _comfy_model_roots() -> List[str]:
     roots = []
     if folder_paths is not None:
@@ -193,50 +143,19 @@ def _comfy_model_roots() -> List[str]:
     return [root for root in dict.fromkeys(roots) if os.path.isdir(root)]
 
 
-def _qwen35_model_roots() -> List[str]:
-    base = _models_dir()
-    roots = [
-        os.path.join(base, "LLM", "Qwen3.5"),
-        os.path.join(base, "LLM"),
-        os.path.join(base, "llm"),
-        os.path.join(base, "transformers"),
-    ]
-    if folder_paths is not None:
-        for key in ["LLM", "llm", "transformers"]:
-            try:
-                roots.extend(folder_paths.get_folder_paths(key))
-            except Exception:
-                pass
-    return [root for root in dict.fromkeys(roots) if os.path.isdir(root)]
-
-
 def _iter_local_hf_models():
     for root in _comfy_model_roots():
         for current, dirs, _files in os.walk(root):
             if _looks_like_hf_model_dir(current):
                 label = os.path.basename(os.path.normpath(current))
-                if "qwen" in label.lower():
+                lowered = label.lower()
+                if "qwen-vl" in lowered or "qwen3-vl" in lowered or "qwenvl" in lowered:
                     yield label, current
                 dirs[:] = []
 
 
 def _local_model_map() -> Dict[str, str]:
     return _dedupe_model_map(_iter_local_hf_models())
-
-
-def _iter_local_qwen35_models():
-    for root in _qwen35_model_roots():
-        for current, dirs, _files in os.walk(root):
-            if _looks_like_hf_model_dir(current):
-                label = os.path.basename(os.path.normpath(current))
-                lowered = label.lower()
-                if "qwen3.5" in lowered or "qwen3_5" in lowered or "qwen-3.5" in lowered:
-                    yield label, current
-                dirs[:] = []
-
-
-def _qwen35_model_map() -> Dict[str, str]:
-    return _dedupe_model_map(_iter_local_qwen35_models())
 
 
 def _dedupe_model_map(items) -> Dict[str, str]:
@@ -246,35 +165,10 @@ def _dedupe_model_map(items) -> Dict[str, str]:
         clean = os.path.basename(os.path.normpath(label)) or label
         key = clean.lower()
         if key in used:
-            parent = os.path.basename(os.path.dirname(os.path.normpath(path)))
-            clean = f"{clean} ({parent})"
-            key = clean.lower()
-        suffix = 2
-        base = clean
-        while key in used:
-            clean = f"{base} #{suffix}"
-            key = clean.lower()
-            suffix += 1
+            continue
         used.add(key)
         result[clean] = path
     return result
-
-
-def _list_comfy_qwen35_models() -> List[str]:
-    return sorted(_qwen35_model_map().keys(), key=str.lower)
-
-
-def _resolve_qwen35_comfy_model(model_name: str) -> str:
-    model_name = (model_name or "").strip()
-    if not model_name or model_name == "none":
-        return ""
-    return _qwen35_model_map().get(model_name, "")
-
-
-def _first_qwen35_model_path() -> str:
-    for _label, path in _iter_local_qwen35_models():
-        return path
-    return ""
 
 
 def _list_comfy_qwen_vl_models() -> List[str]:
@@ -311,14 +205,6 @@ def _find_repo_in_local_models(repo_id: str) -> str:
     return ""
 
 
-def _find_qwen35_repo_in_local_models(repo_id: str) -> str:
-    expected = _hf_repo_folder_name(repo_id).lower()
-    for _label, path in _iter_local_qwen35_models():
-        if os.path.basename(os.path.normpath(path)).lower() == expected:
-            return path
-    return ""
-
-
 def _ensure_repo_in_comfy_models(repo_id: str) -> str:
     target = os.path.join(_primary_qwen_vl_models_dir(), _hf_repo_folder_name(repo_id))
     if _looks_like_hf_model_dir(target):
@@ -328,18 +214,6 @@ def _ensure_repo_in_comfy_models(repo_id: str) -> str:
         repo_id=repo_id,
         target=target,
         folder_hint="ComfyUI/models/LLM/Qwen-VL",
-    )
-
-
-def _ensure_qwen35_repo_in_comfy_models(repo_id: str) -> str:
-    target = os.path.join(_primary_qwen35_models_dir(), _hf_repo_folder_name(repo_id))
-    if _looks_like_hf_model_dir(target):
-        print(f"[QwenVL-Smit] Using local Qwen3.5 model: {target}")
-        return target
-    return _download_repo_to_dir(
-        repo_id=repo_id,
-        target=target,
-        folder_hint="ComfyUI/models/LLM/Qwen3.5",
     )
 
 
@@ -423,19 +297,6 @@ def _resolve_selected_vl_model(model_name: str) -> str:
     return _ensure_repo_in_comfy_models(DEFAULT_MODEL)
 
 
-def _resolve_selected_qwen35_model(model_name: str) -> str:
-    model_name = (model_name or "").strip()
-    local_path = _resolve_qwen35_comfy_model(model_name)
-    if local_path:
-        return local_path
-    if _is_repo_id(model_name):
-        local_repo = _find_qwen35_repo_in_local_models(model_name)
-        if local_repo:
-            return local_repo
-        return _ensure_qwen35_repo_in_comfy_models(model_name)
-    return _ensure_qwen35_repo_in_comfy_models(DEFAULT_QWEN35_MODEL)
-
-
 def _vl_model_choices() -> List[str]:
     local_models = _list_comfy_qwen_vl_models()
     local_keys = {name.lower() for name in local_models}
@@ -446,31 +307,9 @@ def _vl_model_choices() -> List[str]:
     return list(dict.fromkeys(local_models + presets))
 
 
-def _qwen35_model_choices() -> List[str]:
-    local_models = _list_comfy_qwen35_models()
-    local_keys = {name.lower() for name in local_models}
-    presets = [
-        preset for preset in QWEN35_MODEL_PRESETS
-        if _hf_repo_folder_name(preset).lower() not in local_keys
-    ]
-    return list(dict.fromkeys(local_models + presets))
-
-
 def _load_selected_vl_bundle(模型, 精度, 设备, 量化, 注意力模式) -> QwenVLModelBundle:
     return _load_model(
         _resolve_selected_vl_model(模型),
-        "",
-        _ui_dtype(精度),
-        _ui_device_map(设备),
-        _ui_quantization(量化),
-        _ui_attention(注意力模式),
-        True,
-    )
-
-
-def _load_selected_qwen35_bundle(模型, 精度, 设备, 量化, 注意力模式) -> Qwen35ModelBundle:
-    return _load_qwen35_model(
-        _resolve_selected_qwen35_model(模型),
         "",
         _ui_dtype(精度),
         _ui_device_map(设备),
@@ -547,16 +386,15 @@ def _cache_key(
 
 def _raise_transformers_load_error(exc: Exception, model_id: str) -> None:
     message = str(exc)
-    if "does not recognize this architecture" in message or "qwen3_5" in message:
+    if "does not recognize this architecture" in message:
         raise RuntimeError(
             f"QwenVL-Smit 无法加载模型架构：{model_id}\n\n"
-            "这不是 ComfyUI 没有热刷新模型导致的问题。模型已经被读取到 config.json，"
-            "但当前 ComfyUI Python 环境中的 transformers 还不认识该模型架构。\n\n"
+            "模型已经被读取到 config.json，但当前 ComfyUI Python 环境中的 transformers "
+            "还不认识该模型架构。\n\n"
             "处理方式：\n"
             "1. 先尝试升级 transformers：python -m pip install -U transformers\n"
-            "2. 如果仍然报 qwen3_5 不识别，说明当前正式版 transformers 还没包含该架构。"
-            "参考实现需要 Transformers 5.x 级别的 Qwen3.5 支持，"
-            "需要安装源码版：python -m pip install -U git+https://github.com/huggingface/transformers.git\n"
+            "2. 如果正式版仍不支持该模型，可以安装源码版："
+            "python -m pip install -U git+https://github.com/huggingface/transformers.git\n"
             "3. 安装完成后必须完全重启 ComfyUI。\n\n"
             "便携包用户请使用 ComfyUI 自带的 Python 执行上面的 pip 命令，不要用系统 Python。\n\n"
             f"原始错误：{type(exc).__name__}: {exc}"
@@ -643,85 +481,6 @@ def _load_model(
     return bundle
 
 
-def _load_qwen35_model(
-    model_id: str,
-    cache_dir: str,
-    dtype: str,
-    device_map: str,
-    quantization: str,
-    attention_implementation: str,
-    trust_remote_code: bool,
-) -> Qwen35ModelBundle:
-    _require_torch()
-    try:
-        from transformers import AutoModelForImageTextToText, AutoProcessor
-    except Exception as exc:
-        raise RuntimeError(
-            "Missing transformers. Install requirements.txt in the ComfyUI Python environment."
-        ) from exc
-
-    key = "qwen35:" + _cache_key(
-        model_id,
-        cache_dir,
-        dtype,
-        device_map,
-        quantization,
-        attention_implementation,
-        trust_remote_code,
-    )
-    if key in QWEN35_CACHE:
-        return QWEN35_CACHE[key]
-
-    kwargs: Dict[str, Any] = {
-        "torch_dtype": _torch_dtype(dtype),
-        "device_map": _device_map_value(device_map),
-        "trust_remote_code": trust_remote_code,
-    }
-    processor_kwargs: Dict[str, Any] = {"trust_remote_code": trust_remote_code}
-
-    if cache_dir.strip():
-        kwargs["cache_dir"] = cache_dir.strip()
-        processor_kwargs["cache_dir"] = cache_dir.strip()
-
-    if attention_implementation != "auto":
-        kwargs["attn_implementation"] = attention_implementation
-
-    if quantization in {"4bit", "8bit"}:
-        try:
-            from transformers import BitsAndBytesConfig
-        except Exception as exc:
-            raise RuntimeError(
-                "4bit/8bit loading requires bitsandbytes and a compatible CUDA build."
-            ) from exc
-        if quantization == "4bit":
-            kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-            )
-        else:
-            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-
-    try:
-        processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
-        model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
-    except Exception as exc:
-        _raise_transformers_load_error(exc, model_id)
-    model.eval()
-
-    bundle = Qwen35ModelBundle(
-        model=model,
-        processor=processor,
-        model_id=model_id,
-        dtype=dtype,
-        device_map=device_map,
-        quantization=quantization,
-    )
-    QWEN35_CACHE[key] = bundle
-    return bundle
-
-
 def _image_tensor_to_pil_list(images) -> List[Image.Image]:
     if images is None:
         return []
@@ -758,168 +517,6 @@ def _select_frames(images: List[Image.Image], max_frames: int) -> List[Image.Ima
         return images
     indexes = np.linspace(0, len(images) - 1, max_frames).round().astype(int).tolist()
     return [images[i] for i in indexes]
-
-
-def _save_temp_image(image: Image.Image) -> str:
-    fd, path = tempfile.mkstemp(suffix=".png")
-    os.close(fd)
-    image.save(path, format="PNG")
-    return path
-
-
-def _gguf_model_dir(model_name: str) -> Path:
-    base = Path(_models_dir()) / "LLM" / f"{model_name}-GGUF"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-def _gguf_filename(model_name: str, quantization: str) -> str:
-    prefix = "UD-" if quantization in QWEN35_GGUF_DYNAMIC_QUANTS else ""
-    return f"{model_name}-{prefix}{quantization}.gguf"
-
-
-def _find_llama_mtmd_cli(cli_path: str) -> str:
-    cli_path = (cli_path or "").strip().strip('"')
-    if cli_path:
-        if os.path.isfile(cli_path):
-            return cli_path
-        raise FileNotFoundError(f"找不到 llama-mtmd-cli：{cli_path}")
-
-    for name in ["llama-mtmd-cli.exe", "llama-mtmd-cli"]:
-        found = shutil.which(name)
-        if found:
-            return found
-
-    candidates = [
-        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "Release" / "llama-mtmd-cli.exe",
-        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "llama-mtmd-cli.exe",
-        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "Release" / "llama-mtmd-cli",
-        Path(_models_dir()).parent / "llama.cpp" / "build" / "bin" / "llama-mtmd-cli",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-
-    raise FileNotFoundError(
-        "未找到 llama-mtmd-cli。GGUF 节点需要单独编译 llama.cpp 的 multimodal CLI，"
-        "或在节点的 `llama路径` 输入中填写 llama-mtmd-cli.exe 的完整路径。"
-    )
-
-
-def _download_gguf_file(repo_id: str, filename: str, model_dir: Path) -> Path:
-    path = model_dir / filename
-    if path.exists():
-        return path
-    try:
-        from huggingface_hub import hf_hub_download
-    except Exception as exc:
-        raise RuntimeError("下载 GGUF 需要 huggingface_hub，请先安装 requirements.txt。") from exc
-
-    endpoint = os.environ.get("QWENVL_SMIT_HF_ENDPOINT") or os.environ.get("HF_ENDPOINT")
-    print(f"[QwenVL-Smit] Downloading GGUF {filename} from {repo_id}")
-    kwargs = {
-        "repo_id": repo_id,
-        "filename": filename,
-        "local_dir": str(model_dir),
-    }
-    if endpoint:
-        kwargs["endpoint"] = endpoint
-    try:
-        hf_hub_download(**kwargs)
-    except Exception as exc:
-        raise RuntimeError(
-            f"Qwen3.5 GGUF 文件下载失败：{repo_id}/{filename}\n"
-            "可以手动下载该 GGUF 文件和 mmproj-BF16.gguf，并放到：\n"
-            f"{model_dir}\n\n"
-            f"原始错误：{type(exc).__name__}: {exc}"
-        ) from exc
-    return path
-
-
-def _ensure_qwen35_gguf(model_name: str, quantization: str) -> tuple[Path, Path]:
-    repo_id = QWEN35_GGUF_MODELS[model_name]
-    model_dir = _gguf_model_dir(model_name)
-    model_path = _download_gguf_file(repo_id, _gguf_filename(model_name, quantization), model_dir)
-    mmproj_path = _download_gguf_file(repo_id, MMPROJ_FILENAME, model_dir)
-    return model_path, mmproj_path
-
-
-def _extract_thinking(text: str) -> tuple[str, str]:
-    text = text or ""
-    thinking = ""
-    match = re.search(r"<think[^>]*>(.*?)</think>", text, flags=re.IGNORECASE | re.DOTALL)
-    if match:
-        thinking = match.group(1).strip()
-        text = re.sub(r"<think[^>]*>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
-    elif "</think>" in text:
-        parts = text.split("</think>", 1)
-        thinking = parts[0].strip()
-        text = parts[1].strip()
-    return text.strip(), thinking
-
-
-def _run_qwen35_gguf(
-    cli_path: str,
-    model_path: Path,
-    mmproj_path: Path,
-    prompt: str,
-    system_prompt: str,
-    image_path: str,
-    max_tokens: int,
-    temperature: float,
-    top_p: float,
-    top_k: int,
-    repeat_penalty: float,
-    gpu_layers: int,
-    context_size: int,
-    thinking: bool,
-    seed: int,
-) -> str:
-    cmd = [
-        cli_path,
-        "-m",
-        str(model_path),
-        "--mmproj",
-        str(mmproj_path),
-        "-n",
-        str(max_tokens),
-        "--temp",
-        str(temperature),
-        "--top-p",
-        str(top_p),
-        "--top-k",
-        str(top_k),
-        "--repeat-penalty",
-        str(repeat_penalty),
-        "-ngl",
-        str(gpu_layers),
-        "-c",
-        str(context_size),
-        "--seed",
-        str(seed),
-    ]
-    if image_path:
-        cmd.extend(["--image", image_path])
-
-    think_prefix = "/think" if thinking else "/no_think"
-    if system_prompt and system_prompt.strip():
-        full_prompt = f"{system_prompt.strip()}\n\n{think_prefix}\n{prompt}"
-    else:
-        full_prompt = f"{think_prefix}\n{prompt}"
-    cmd.extend(["-p", full_prompt])
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=600,
-    )
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        raise RuntimeError(f"Qwen3.5 GGUF 推理失败，退出码 {result.returncode}：\n{stderr[-2000:]}")
-    return result.stdout or ""
 
 
 def _combine_prompt(task_preset: str, prompt: str, force_json: bool) -> str:
@@ -1109,78 +706,6 @@ def _run_generation(
     return output_text[0] if output_text else ""
 
 
-def _run_qwen35_chat(
-    bundle: Qwen35ModelBundle,
-    prompt: str,
-    system_prompt: str,
-    history_json: str,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    repetition_penalty: float,
-    seed: int,
-) -> str:
-    _require_torch()
-    if seed >= 0:
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-
-    messages = []
-    if system_prompt.strip():
-        messages.append({"role": "system", "content": system_prompt.strip()})
-    messages.extend(_parse_history(history_json))
-    messages.append({"role": "user", "content": (prompt or "").strip()})
-
-    if hasattr(bundle.processor, "apply_chat_template"):
-        text = bundle.processor.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-    else:
-        text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages]) + "\nassistant:"
-
-    inputs = bundle.processor(text=[text], padding=True, return_tensors="pt")
-    if hasattr(bundle.model, "device"):
-        target_device = bundle.model.device
-    elif torch.cuda.is_available() and bundle.device_map != "cpu":
-        target_device = torch.device("cuda")
-    else:
-        target_device = torch.device("cpu")
-
-    try:
-        inputs = inputs.to(target_device)
-    except Exception:
-        pass
-
-    do_sample = temperature > 0
-    generation_kwargs = {
-        "max_new_tokens": max_new_tokens,
-        "do_sample": do_sample,
-        "repetition_penalty": repetition_penalty,
-    }
-    if do_sample:
-        generation_kwargs["temperature"] = temperature
-        generation_kwargs["top_p"] = top_p
-    tokenizer = getattr(bundle.processor, "tokenizer", None)
-    if tokenizer is not None and tokenizer.pad_token_id is not None:
-        generation_kwargs["pad_token_id"] = tokenizer.pad_token_id
-    if tokenizer is not None and tokenizer.eos_token_id is not None:
-        generation_kwargs["eos_token_id"] = tokenizer.eos_token_id
-
-    with torch.inference_mode():
-        generated_ids = bundle.model.generate(**inputs, **generation_kwargs)
-
-    input_len = inputs["input_ids"].shape[-1]
-    output_ids = generated_ids[0, input_len:]
-    if hasattr(bundle.processor, "decode"):
-        return bundle.processor.decode(output_ids, skip_special_tokens=True).strip()
-    if tokenizer is not None:
-        return tokenizer.decode(output_ids, skip_special_tokens=True).strip()
-    return str(output_ids)
-
-
 class QwenVLSmitModelLoader:
     @classmethod
     def INPUT_TYPES(cls):
@@ -1225,274 +750,6 @@ class QwenVLSmitModelLoader:
             "quantization": bundle.quantization,
         }
         return (bundle, json.dumps(info, ensure_ascii=False, indent=2))
-
-
-class Qwen35SmitModelLoader:
-    @classmethod
-    def INPUT_TYPES(cls):
-        models = _qwen35_model_choices()
-        return {
-            "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_QWEN35_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
-                "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
-                "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
-            }
-        }
-
-    RETURN_TYPES = ("QWEN35_MODEL", "STRING")
-    RETURN_NAMES = ("模型", "模型信息")
-    FUNCTION = "load"
-    CATEGORY = NODE_CATEGORY
-
-    def load(
-        self,
-        模型,
-        精度,
-        设备,
-        量化,
-        注意力模式,
-    ):
-        model_id = _resolve_selected_qwen35_model(模型)
-        bundle = _load_qwen35_model(
-            model_id,
-            "",
-            _ui_dtype(精度),
-            _ui_device_map(设备),
-            _ui_quantization(量化),
-            _ui_attention(注意力模式),
-            True,
-        )
-        info = {
-            "model_id": bundle.model_id,
-            "dtype": bundle.dtype,
-            "device_map": bundle.device_map,
-            "quantization": bundle.quantization,
-            "type": "qwen3.5 multimodal model",
-        }
-        return (bundle, json.dumps(info, ensure_ascii=False, indent=2))
-
-
-class Qwen35SmitChat:
-    @classmethod
-    def INPUT_TYPES(cls):
-        models = _qwen35_model_choices()
-        return {
-            "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_QWEN35_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
-                "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
-                "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
-                "提示词": ("STRING", {"default": "请给出简洁回答。", "multiline": True}),
-                "系统提示词": ("STRING", {"default": "你是一个有帮助的助手。", "multiline": True}),
-                "历史记录JSON": ("STRING", {"default": "", "multiline": True}),
-                "强制JSON": ("BOOLEAN", {"default": False}),
-                "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
-                "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "核采样": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "重复惩罚": ("FLOAT", {"default": 1.05, "min": 0.1, "max": 2.0, "step": 0.01}),
-                "随机种子": ("INT", {"default": -1, "min": -1, "max": 0xFFFFFFFF, "step": 1}),
-            }
-        }
-
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("文本", "JSON")
-    FUNCTION = "chat"
-    CATEGORY = NODE_CATEGORY
-
-    def chat(
-        self,
-        模型,
-        精度,
-        设备,
-        量化,
-        注意力模式,
-        提示词,
-        系统提示词,
-        历史记录JSON,
-        强制JSON,
-        最大输出Token,
-        温度,
-        核采样,
-        重复惩罚,
-        随机种子,
-    ):
-        final_prompt = (提示词 or "").strip()
-        if 强制JSON and "json" not in final_prompt.lower():
-            final_prompt += "\n\nReturn only valid JSON."
-        bundle = _load_selected_qwen35_bundle(模型, 精度, 设备, 量化, 注意力模式)
-        text = _run_qwen35_chat(
-            bundle,
-            final_prompt,
-            系统提示词,
-            历史记录JSON,
-            最大输出Token,
-            温度,
-            核采样,
-            重复惩罚,
-            随机种子,
-        )
-        return (text, _extract_json(text))
-
-
-class Qwen35SmitImage:
-    @classmethod
-    def INPUT_TYPES(cls):
-        models = _qwen35_model_choices()
-        return {
-            "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_QWEN35_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
-                "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
-                "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
-                "图片1": ("IMAGE",),
-                "任务类型": (list(TASK_PRESETS.keys()), {"default": "自定义"}),
-                "提示词": ("STRING", {"default": "请描述这张图片。", "multiline": True}),
-                "系统提示词": ("STRING", {"default": "你是一个有帮助的多模态助手。", "multiline": True}),
-                "历史记录JSON": ("STRING", {"default": "", "multiline": True}),
-                "强制JSON": ("BOOLEAN", {"default": False}),
-                "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
-                "温度": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "核采样": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "随机种子": ("INT", {"default": -1, "min": -1, "max": 0xFFFFFFFF, "step": 1}),
-            },
-            "optional": {
-                "图片2": ("IMAGE",),
-                "图片3": ("IMAGE",),
-                "图片4": ("IMAGE",),
-                "图片5": ("IMAGE",),
-                "图片6": ("IMAGE",),
-            },
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("文本", "JSON", "坐标JSON")
-    FUNCTION = "analyze"
-    CATEGORY = NODE_CATEGORY
-
-    def analyze(
-        self,
-        模型,
-        精度,
-        设备,
-        量化,
-        注意力模式,
-        图片1,
-        任务类型,
-        提示词,
-        系统提示词,
-        历史记录JSON,
-        强制JSON,
-        最大输出Token,
-        温度,
-        核采样,
-        随机种子,
-        图片2=None,
-        图片3=None,
-        图片4=None,
-        图片5=None,
-        图片6=None,
-    ):
-        pil_images = _collect_pil_images(图片1, 图片2, 图片3, 图片4, 图片5, 图片6)
-        final_prompt = _combine_prompt(任务类型, 提示词, 强制JSON)
-        bundle = _load_selected_qwen35_bundle(模型, 精度, 设备, 量化, 注意力模式)
-        text = _run_generation(
-            bundle,
-            pil_images,
-            final_prompt,
-            系统提示词,
-            历史记录JSON,
-            "image",
-            1.0,
-            DEFAULT_IMAGE_MIN_PIXELS,
-            DEFAULT_IMAGE_MAX_PIXELS,
-            最大输出Token,
-            温度,
-            核采样,
-            随机种子,
-        )
-        return (text, _extract_json(text), _extract_boxes(text))
-
-
-class Qwen35SmitVideo:
-    @classmethod
-    def INPUT_TYPES(cls):
-        models = _qwen35_model_choices()
-        return {
-            "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_QWEN35_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
-                "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
-                "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
-                "视频帧1": ("IMAGE",),
-                "任务类型": (list(TASK_PRESETS.keys()), {"default": "自定义"}),
-                "提示词": ("STRING", {"default": "请描述这个视频。", "multiline": True}),
-                "系统提示词": ("STRING", {"default": "你是一个有帮助的多模态助手。", "multiline": True}),
-                "历史记录JSON": ("STRING", {"default": "", "multiline": True}),
-                "强制JSON": ("BOOLEAN", {"default": False}),
-                "帧率": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 60.0, "step": 0.01}),
-                "最大帧数": ("INT", {"default": 32, "min": 1, "max": 512, "step": 1}),
-                "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
-                "温度": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "核采样": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "随机种子": ("INT", {"default": -1, "min": -1, "max": 0xFFFFFFFF, "step": 1}),
-            },
-            "optional": {
-                "视频帧2": ("IMAGE",),
-                "视频帧3": ("IMAGE",),
-            },
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("文本", "JSON", "坐标JSON")
-    FUNCTION = "analyze"
-    CATEGORY = NODE_CATEGORY
-
-    def analyze(
-        self,
-        模型,
-        精度,
-        设备,
-        量化,
-        注意力模式,
-        视频帧1,
-        任务类型,
-        提示词,
-        系统提示词,
-        历史记录JSON,
-        强制JSON,
-        帧率,
-        最大帧数,
-        最大输出Token,
-        温度,
-        核采样,
-        随机种子,
-        视频帧2=None,
-        视频帧3=None,
-    ):
-        pil_frames = _select_frames(_collect_pil_images(视频帧1, 视频帧2, 视频帧3), 最大帧数)
-        final_prompt = _combine_prompt(任务类型, 提示词, 强制JSON)
-        bundle = _load_selected_qwen35_bundle(模型, 精度, 设备, 量化, 注意力模式)
-        text = _run_generation(
-            bundle,
-            pil_frames,
-            final_prompt,
-            系统提示词,
-            历史记录JSON,
-            "video",
-            帧率,
-            DEFAULT_IMAGE_MIN_PIXELS,
-            DEFAULT_VIDEO_MAX_PIXELS,
-            最大输出Token,
-            温度,
-            核采样,
-            随机种子,
-        )
-        return (text, _extract_json(text), _extract_boxes(text))
 
 
 class QwenVLSmitImage:
@@ -1686,7 +943,6 @@ class QwenVLSmitUnload:
     def unload(self, 清理全部模型缓存):
         if 清理全部模型缓存:
             MODEL_CACHE.clear()
-            QWEN35_CACHE.clear()
         gc.collect()
         if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -1699,106 +955,9 @@ class QwenVLSmitUnload:
         return ("QwenVL-Smit 模型缓存已清理。",)
 
 
-class Qwen35SmitGGUF:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "模型": (list(QWEN35_GGUF_MODELS.keys()), {"default": "Qwen3.5-9B"}),
-                "GGUF量化": (QWEN35_GGUF_QUANTS, {"default": "Q4_K_XL"}),
-                "提示词": (
-                    "STRING",
-                    {"default": "请详细描述这张图片。", "multiline": True},
-                ),
-                "系统提示词": ("STRING", {"default": "", "multiline": True}),
-                "最大输出Token": ("INT", {"default": 2048, "min": 64, "max": 32768, "step": 64}),
-                "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "核采样": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.05}),
-                "TopK": ("INT", {"default": 20, "min": 1, "max": 100, "step": 1}),
-                "重复惩罚": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05}),
-                "GPU层数": ("INT", {"default": 99, "min": -1, "max": 200, "step": 1}),
-                "上下文长度": ("INT", {"default": 8192, "min": 1024, "max": 131072, "step": 1024}),
-                "思考模式": ("BOOLEAN", {"default": False}),
-                "随机种子": ("INT", {"default": 1, "min": 1, "max": 2**32 - 1}),
-                "llama路径": ("STRING", {"default": ""}),
-            },
-            "optional": {
-                "图片": ("IMAGE",),
-            },
-        }
-
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("文本", "思考内容", "模型信息")
-    FUNCTION = "analyze"
-    CATEGORY = NODE_CATEGORY
-
-    def analyze(
-        self,
-        模型,
-        GGUF量化,
-        提示词,
-        系统提示词,
-        最大输出Token,
-        温度,
-        核采样,
-        TopK,
-        重复惩罚,
-        GPU层数,
-        上下文长度,
-        思考模式,
-        随机种子,
-        llama路径,
-        图片=None,
-    ):
-        cli = _find_llama_mtmd_cli(llama路径)
-        model_path, mmproj_path = _ensure_qwen35_gguf(模型, GGUF量化)
-        image_path = ""
-        try:
-            images = _collect_pil_images(图片)
-            if images:
-                image_path = _save_temp_image(images[0])
-            raw = _run_qwen35_gguf(
-                cli,
-                model_path,
-                mmproj_path,
-                提示词,
-                系统提示词,
-                image_path,
-                最大输出Token,
-                温度,
-                核采样,
-                TopK,
-                重复惩罚,
-                GPU层数,
-                上下文长度,
-                思考模式,
-                随机种子,
-            )
-        finally:
-            if image_path:
-                try:
-                    os.remove(image_path)
-                except Exception:
-                    pass
-
-        text, thinking = _extract_thinking(raw)
-        info = (
-            f"GGUF模型: {模型}\n"
-            f"量化: {GGUF量化}\n"
-            f"模型文件: {model_path}\n"
-            f"mmproj: {mmproj_path}\n"
-            f"llama-mtmd-cli: {cli}"
-        )
-        return (text, thinking, info)
-
-
 NODE_CLASS_MAPPINGS = {
     "QwenVLSmitImage": QwenVLSmitImage,
     "QwenVLSmitVideo": QwenVLSmitVideo,
-    "Qwen35SmitChat": Qwen35SmitChat,
-    "Qwen35SmitImage": Qwen35SmitImage,
-    "Qwen35SmitVideo": Qwen35SmitVideo,
-    "Qwen35SmitGGUF": Qwen35SmitGGUF,
     "QwenVLSmitPromptPreset": QwenVLSmitPromptPreset,
     "QwenVLSmitUnload": QwenVLSmitUnload,
 }
@@ -1806,10 +965,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "QwenVLSmitImage": "QwenVL-Smit 图片理解",
     "QwenVLSmitVideo": "QwenVL-Smit 视频理解",
-    "Qwen35SmitChat": "Qwen3.5-Smit 文本对话",
-    "Qwen35SmitImage": "Qwen3.5-Smit 图片理解",
-    "Qwen35SmitVideo": "Qwen3.5-Smit 视频理解",
-    "Qwen35SmitGGUF": "Qwen3.5-Smit GGUF理解",
     "QwenVLSmitPromptPreset": "QwenVL-Smit 提示词预设",
     "QwenVLSmitUnload": "QwenVL-Smit 清理缓存",
 }
