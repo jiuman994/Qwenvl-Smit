@@ -1,7 +1,7 @@
 [project]
 name = "Qwenvl-Smit"
 version = "0.1.0"
-description = "ComfyUI custom nodes for local Qwen3-VL and Qwen3.5 image, multi-image, video, OCR, grounding, detection, chat, and structured output workflows."
+description = "ComfyUI custom nodes for local Qwen3-VL image, multi-image, video, OCR, grounding, detection, and structured output workflows."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
