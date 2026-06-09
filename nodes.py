@@ -35,8 +35,12 @@ DEFAULT_VIDEO_MAX_PIXELS = 200704
 MODEL_PRESETS = [
     "Qwen/Qwen3-VL-4B-Instruct",
     "Qwen/Qwen3-VL-4B-Thinking",
+    "Qwen/Qwen3-VL-4B-Instruct-FP8",
+    "Qwen/Qwen3-VL-4B-Thinking-FP8",
     "Qwen/Qwen3-VL-8B-Instruct",
     "Qwen/Qwen3-VL-8B-Thinking",
+    "Qwen/Qwen3-VL-8B-Instruct-FP8",
+    "Qwen/Qwen3-VL-8B-Thinking-FP8",
 ]
 
 QWEN35_MODEL_PRESETS = [
@@ -283,25 +287,11 @@ def _ensure_repo_in_comfy_models(repo_id: str) -> str:
     if _looks_like_hf_model_dir(target):
         print(f"[QwenVL-Smit] Using local model: {target}")
         return target
-
-    try:
-        from huggingface_hub import snapshot_download
-    except Exception as exc:
-        raise RuntimeError(
-            "huggingface_hub is required for automatic model downloads. "
-            "Install requirements.txt or place the model under ComfyUI/models/LLM/Qwen-VL."
-        ) from exc
-
-    os.makedirs(target, exist_ok=True)
-    print(f"[QwenVL-Smit] Downloading {repo_id} to {target}")
-    snapshot_download(
+    return _download_repo_to_dir(
         repo_id=repo_id,
-        local_dir=target,
-        local_dir_use_symlinks=False,
-        ignore_patterns=["*.md", "*.txt", ".git*", ".gitattributes"],
-        resume_download=True,
+        target=target,
+        folder_hint="ComfyUI/models/LLM/Qwen-VL",
     )
-    return target
 
 
 def _ensure_qwen35_repo_in_comfy_models(repo_id: str) -> str:
@@ -309,25 +299,78 @@ def _ensure_qwen35_repo_in_comfy_models(repo_id: str) -> str:
     if _looks_like_hf_model_dir(target):
         print(f"[QwenVL-Smit] Using local Qwen3.5 model: {target}")
         return target
+    return _download_repo_to_dir(
+        repo_id=repo_id,
+        target=target,
+        folder_hint="ComfyUI/models/LLM/Qwen3.5",
+    )
+
+
+def _download_repo_to_dir(repo_id: str, target: str, folder_hint: str) -> str:
+    os.makedirs(target, exist_ok=True)
+    errors = []
+    source = (os.environ.get("QWENVL_SMIT_DOWNLOAD_SOURCE") or "auto").strip().lower()
+    if source not in {"auto", "modelscope", "huggingface"}:
+        source = "auto"
+
+    if source in {"auto", "modelscope"}:
+        try:
+            from modelscope import snapshot_download as modelscope_snapshot_download
+
+            print(f"[QwenVL-Smit] Downloading {repo_id} from ModelScope to {target}")
+            modelscope_snapshot_download(repo_id, local_dir=target)
+            return target
+        except Exception as exc:
+            errors.append(f"ModelScope: {type(exc).__name__}: {exc}")
+            if source == "modelscope":
+                return _raise_download_error(repo_id, target, folder_hint, errors)
 
     try:
         from huggingface_hub import snapshot_download
     except Exception as exc:
-        raise RuntimeError(
-            "huggingface_hub is required for automatic model downloads. "
-            "Install requirements.txt or place the model under ComfyUI/models/LLM/Qwen3.5."
-        ) from exc
+        errors.append(f"Hugging Face: missing huggingface_hub: {exc}")
+        return _raise_download_error(repo_id, target, folder_hint, errors)
 
-    os.makedirs(target, exist_ok=True)
-    print(f"[QwenVL-Smit] Downloading {repo_id} to {target}")
-    snapshot_download(
-        repo_id=repo_id,
-        local_dir=target,
-        local_dir_use_symlinks=False,
-        ignore_patterns=["*.md", "*.txt", ".git*", ".gitattributes"],
-        resume_download=True,
-    )
+    endpoint = os.environ.get("QWENVL_SMIT_HF_ENDPOINT") or os.environ.get("HF_ENDPOINT")
+    endpoint_text = f" via {endpoint}" if endpoint else ""
+    print(f"[QwenVL-Smit] Downloading {repo_id} to {target}{endpoint_text}")
+    try:
+        kwargs = {
+            "repo_id": repo_id,
+            "local_dir": target,
+            "local_dir_use_symlinks": False,
+            "ignore_patterns": ["*.md", ".git*", ".gitattributes"],
+            "resume_download": True,
+        }
+        if endpoint:
+            kwargs["endpoint"] = endpoint
+        snapshot_download(**kwargs)
+    except Exception as exc:
+        errors.append(f"Hugging Face: {type(exc).__name__}: {exc}")
+        return _raise_download_error(repo_id, target, folder_hint, errors)
     return target
+
+
+def _raise_download_error(repo_id: str, target: str, folder_hint: str, errors: List[str]) -> str:
+    detail = "\n".join(f"- {item}" for item in errors) if errors else "- unknown error"
+    raise RuntimeError(
+        f"QwenVL-Smit 自动下载模型失败：{repo_id}\n\n"
+        "下载顺序：本地模型目录 -> ModelScope 魔搭社区 -> Hugging Face / HF_ENDPOINT。\n\n"
+        "常见原因：\n"
+        "1. 当前网络无法连接 ModelScope 或 Hugging Face。\n"
+        "2. 模型需要登录、权限或接受协议。\n"
+        "3. 本地目录里只有部分下载文件，模型不完整。\n"
+        "4. 未安装可选的 modelscope 包时，会自动跳过 ModelScope 并尝试 Hugging Face。\n\n"
+        "处理方式：\n"
+        f"- 手动下载模型，并把完整模型文件夹放到：{folder_hint}\n"
+        "- 国内网络可以优先安装可选依赖：pip install modelscope\n"
+        "- 也可以在启动 ComfyUI 前设置 Hugging Face 镜像："
+        "HF_ENDPOINT=https://hf-mirror.com\n"
+        "- 如需强制下载源，可设置 QWENVL_SMIT_DOWNLOAD_SOURCE=modelscope 或 huggingface\n"
+        "- 如果模型需要权限，请先执行：huggingface-cli login\n\n"
+        f"当前目标目录：{target}\n"
+        f"原始错误：\n{detail}"
+    )
 
 
 def _resolve_selected_vl_model(model_name: str) -> str:
