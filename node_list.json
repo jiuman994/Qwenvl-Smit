@@ -3,7 +3,7 @@
     {
       "title": "Qwenvl-Smit",
       "author": "Qwenvl-Smit contributors",
-      "description": "Local Qwen3-VL and Qwen3.5 nodes for ComfyUI: image, multi-image, video, OCR, grounding, detection, chat, and JSON workflows.",
+      "description": "Local Qwen3-VL nodes for ComfyUI: image, multi-image, video, OCR, grounding, detection, and JSON workflows.",
       "files": [
         "https://github.com/jiuman994/Qwenvl-Smit"
       ],
