@@ -1,68 +1,301 @@
 # Qwenvl-Smit
 
-ComfyUI custom nodes for local Qwen3-VL and Qwen3.5 multimodal workflows. Each functional node includes its own model selector, uses ComfyUI model folders by default, and downloads supported Hugging Face models only when needed.
+Qwenvl-Smit 是一组面向本地 Qwen3-VL 和 Qwen3.5 工作流的 ComfyUI 自定义节点。它的目标是让 ComfyUI 用户可以直接在节点里选择模型，完成图片理解、多图参考、视频帧理解、OCR、视觉问答、目标定位、目标检测、文本对话和 JSON 结构化输出。
 
-Qwenvl-Smit 是一组面向本地 Qwen3-VL 和 Qwen3.5 多模态工作流的 ComfyUI 自定义节点。每个功能节点都内置模型选择，默认适配 ComfyUI 模型目录；本地没有模型时才会自动下载支持的 Hugging Face 模型。
+本项目不包含任何模型权重。模型会优先从 ComfyUI 的模型目录中读取；如果用户选择的是支持的 Hugging Face 模型 ID，并且本地还没有对应模型，节点会自动下载到 ComfyUI 的模型目录中。
 
-## Features / 功能
+## 中文说明
 
-- Qwen3-VL local model loading, limited to practical 4B and 8B options
-- Qwen3.5 multimodal model loading through separate nodes, limited to practical local options
-- Built-in model dropdown inside each functional node
-- Hugging Face model ID and ComfyUI model folder support
-- Image understanding and visual question answering
-- Multi-image input through ComfyUI IMAGE batches
-- Video understanding through frame batches
-- OCR-oriented prompting
-- Grounding and detection-oriented prompting
-- JSON-oriented structured output
-- Extracted JSON and bounding-box helper outputs
-- 4-bit / 8-bit quantized loading options when `bitsandbytes` supports your Python/CUDA build
+### 主要功能
 
-## Nodes / 节点
+- 每个功能节点都内置 `模型` 下拉栏，不需要额外连接模型加载节点。
+- 支持 Qwen3-VL 4B、8B 级别模型，避免默认展示不适合普通本地显存的大模型。
+- 支持 Qwen3.5 4B、9B、27B、35B-A3B 级别模型。
+- 图片理解节点支持最多 6 张图片输入。
+- 视频理解节点支持最多 3 路视频帧输入。
+- 支持 OCR、视觉问答、图像描述、目标定位、目标检测、自定义提示词。
+- 支持强制 JSON 提示，并提供 JSON 与坐标 JSON 辅助输出。
+- 支持 4bit、8bit 量化加载；是否可用取决于用户本地的 Python、CUDA、PyTorch 和 bitsandbytes 兼容情况。
+- 支持清理模型缓存，便于本地显存紧张时释放资源。
+
+### 节点列表
 
 - `QwenVL-Smit 图片理解`
-  Selects a Qwen3-VL model inside the node and runs image understanding, VQA, OCR, grounding, detection, captioning, or custom prompts. Supports up to 6 image inputs.
+
+  使用 Qwen3-VL 模型进行图片理解、多图参考、OCR、视觉问答、图像描述、目标定位、目标检测或自定义分析。最多支持 `图片1` 到 `图片6`。
 
 - `QwenVL-Smit 视频理解`
-  Selects a Qwen3-VL model inside the node and treats IMAGE batches as video frames. Supports up to 3 video-frame inputs and can downsample frames before inference.
+
+  使用 Qwen3-VL 模型理解 ComfyUI 的 IMAGE 帧批次。最多支持 `视频帧1` 到 `视频帧3`，可以限制最大帧数以降低显存压力。
 
 - `Qwen3.5-Smit 文本对话`
-  Selects a Qwen3.5 model inside the node and runs text-only chat.
+
+  使用 Qwen3.5 模型进行纯文本对话。
 
 - `Qwen3.5-Smit 图片理解`
-  Selects a Qwen3.5 model inside the node and runs image or multi-image understanding. Supports up to 6 image inputs.
+
+  使用 Qwen3.5 模型进行图片或多图理解。最多支持 `图片1` 到 `图片6`。
 
 - `Qwen3.5-Smit 视频理解`
-  Selects a Qwen3.5 model inside the node and runs video understanding from IMAGE frame batches. Supports up to 3 video-frame inputs.
+
+  使用 Qwen3.5 模型理解 ComfyUI 的 IMAGE 帧批次。最多支持 `视频帧1` 到 `视频帧3`。
 
 - `QwenVL-Smit 提示词预设`
-  Builds reusable prompt text for common tasks. It is optional; use it when you want to share one task preset with several nodes or keep a workflow cleaner.
+
+  这个节点不会加载模型，也不会运行推理。它只负责生成可复用的提示词，适合把 OCR、图像描述、视觉问答、目标检测、目标定位、JSON 输出等常见任务预设给其他节点使用。如果你的工作流很简单，可以完全不使用这个节点，直接在图片、视频或文本节点里写提示词。
 
 - `QwenVL-Smit 清理缓存`
-  Clears the in-process model cache and CUDA cache.
 
-## Installation / 安装
+  清理当前进程中的模型缓存，并尝试释放 CUDA 显存缓存。
 
-### ComfyUI Manager
+### 安装方式
 
-After this repository is published on GitHub, other users can install it with ComfyUI Manager:
+#### 使用 ComfyUI Manager
 
-1. Open ComfyUI Manager
-2. Choose `Install via Git URL` or `Install from Git URL`
+当前 GitHub 版本可以通过 ComfyUI Manager 的 Git URL 安装：
+
+1. 打开 ComfyUI Manager。
+2. 选择 `Install via Git URL` 或 `Install from Git URL`。
+3. 输入：
+
+```text
+https://github.com/jiuman994/Qwenvl-Smit
+```
+
+4. 安装完成后重启 ComfyUI。
+
+如果希望用户可以直接在 Manager 搜索结果里找到该节点，还需要后续把仓库提交到 ComfyUI Manager 节点列表或 Comfy Registry。本项目已经包含 `node_list.json` 和 `pyproject.toml` 元数据，方便后续上架。
+
+#### 手动安装
+
+把仓库克隆到 `ComfyUI/custom_nodes`：
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/jiuman994/Qwenvl-Smit.git
+```
+
+进入插件目录，用 ComfyUI 正在使用的 Python 安装依赖：
+
+```bash
+cd ComfyUI/custom_nodes/Qwenvl-Smit
+python install.py
+```
+
+也可以手动安装依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+安装完成后重启 ComfyUI。
+
+### 推荐环境
+
+- Python `3.10` 或更高版本。
+- 已正确安装 CUDA 版 PyTorch。
+- 推荐 GPU 显存 8GB 或更高。
+- `transformers>=4.57.0`
+- `qwen-vl-utils>=0.0.14`
+- `accelerate>=1.0.0`
+- `huggingface_hub>=0.34.0`
+- `bitsandbytes` 为可选依赖，仅在用户环境支持时用于 4bit 或 8bit 量化加载。
+
+### 显存建议
+
+模型下拉栏默认只放入更适合本地 ComfyUI 的模型。Qwen3-VL 默认只展示 4B 和 8B。Qwen3.5 默认展示 4B、9B、27B、35B-A3B。更大的模型不会出现在默认列表中，避免普通用户误选后无法加载。
+
+| 显存 | Qwen3-VL 建议上限 | Qwen3.5 建议上限 | 建议设置 |
+| --- | --- | --- | --- |
+| 8GB | 4B | 4B 或 9B | 优先使用 `4bit`，视频帧数控制在 16 到 32 帧 |
+| 16GB | 8B | 9B 或 27B | 优先使用 `4bit`，多图和视频任务减少帧数 |
+| 24GB | 8B | 27B 或 35B-A3B | 优先使用 `4bit`，复杂视频任务继续控制帧数 |
+
+实际能否运行还取决于分辨率、输入图片数量、视频帧数、系统占用、PyTorch 版本和量化库兼容情况。
+
+### 模型选择与模型目录
+
+每个功能节点都有自己的 `模型` 下拉栏：
+
+1. 已放入 ComfyUI 模型目录的本地模型会优先显示。
+2. 本地模型后面会显示当前支持的 Hugging Face 模型 ID。
+3. 如果选择 Hugging Face 模型 ID，并且本地没有该模型，节点会自动下载到对应的 ComfyUI 模型目录。
+
+推荐把 Qwen3-VL 模型放在：
+
+```text
+ComfyUI/models/LLM/Qwen-VL/模型文件夹
+```
+
+示例：
+
+```text
+ComfyUI/models/LLM/Qwen-VL/Qwen3-VL-4B-Instruct
+```
+
+推荐把 Qwen3.5 模型放在：
+
+```text
+ComfyUI/models/LLM/Qwen3.5/模型文件夹
+```
+
+节点也会尽量扫描一些常见模型目录，例如：
+
+```text
+ComfyUI/models/LLM/Qwen-VL
+ComfyUI/models/LLM/Qwen3.5
+ComfyUI/models/LLM
+ComfyUI/models/VQA
+ComfyUI/models/hugface
+ComfyUI/models/transformers
+```
+
+### 基础工作流示例
+
+图片 OCR：
+
+```text
+Load Image -> QwenVL-Smit 图片理解
+任务类型: OCR文字识别
+提示词: 提取图片中的全部文字。
+```
+
+多图参考：
+
+```text
+Load Image -> 图片1
+Load Image -> 图片2
+Load Image -> 图片3
+QwenVL-Smit 图片理解
+```
+
+视觉问答：
+
+```text
+Load Image -> QwenVL-Smit 图片理解
+任务类型: 视觉问答
+提示词: 画面主体是什么？它正在做什么？
+```
+
+目标检测：
+
+```text
+Load Image -> QwenVL-Smit 图片理解
+任务类型: 目标检测
+强制JSON: true
+提示词: 检测画面中所有可见的商品包装，返回类别和坐标。
+```
+
+视频理解：
+
+```text
+Load Video frames as IMAGE batch -> QwenVL-Smit 视频理解
+任务类型: 图像描述
+最大帧数: 32
+提示词: 总结这个视频的时间线。
+```
+
+### 输出说明
+
+图片、视频和文本节点会返回以下内容中的一部分或全部：
+
+- `文本`：模型原始回答。
+- `JSON`：如果回答中包含有效 JSON，会尝试提取并返回。
+- `坐标JSON`：如果回答中包含简单的 `[x1, y1, x2, y2]` 或 `<box>...</box>` 坐标格式，会尝试辅助提取。
+
+最终输出格式仍由模型生成结果决定。如果需要更稳定的结构化输出，请打开 `强制JSON`，并在提示词中明确写出需要的 schema。
+
+### 注意事项
+
+- 大模型会占用较多显存。8GB 显卡建议先从 4B 模型开始。
+- `bitsandbytes` 的可用性取决于 Python、CUDA、PyTorch 和操作系统版本。
+- 视频节点接收的是 ComfyUI 的 IMAGE 帧批次，不直接解码视频文件。请先用其他视频加载节点把视频转成帧。
+- 部分 Hugging Face 模型可能需要先执行 `huggingface-cli login`。
+- 自动下载的模型会存放在对应的 ComfyUI 模型目录下。
+
+### 模型来源与声明
+
+本项目只是 ComfyUI 节点适配层，不包含任何 Qwen 模型权重。
+
+Qwen3-VL 与 Qwen3.5 模型由 Qwen 团队提供。本项目在这些模型的基础上做 ComfyUI 节点适配，包括中文界面、本地模型目录识别、多图输入、视频帧输入、JSON 辅助输出和适合本地显存的模型列表。使用模型时请遵守对应 Qwen 模型的开源协议与使用政策。
+
+Qwenvl-Smit 节点代码本身使用 Apache-2.0 协议开源。
+
+### 开发检查
+
+```bash
+python -m py_compile __init__.py nodes.py
+```
+
+## English
+
+Qwenvl-Smit is a ComfyUI custom node extension for local Qwen3-VL and Qwen3.5 workflows. It lets users select models directly inside each functional node and run image understanding, multi-image reference, video-frame understanding, OCR, visual question answering, grounding, detection, text chat, and JSON-oriented structured output.
+
+This project does not include model weights. It reads local models from ComfyUI model folders first. If a supported Hugging Face model ID is selected and the model is not available locally, the node downloads it into the matching ComfyUI model folder.
+
+### Features
+
+- Built-in model selector inside each functional node.
+- Qwen3-VL presets are limited to practical 4B and 8B options.
+- Qwen3.5 presets are limited to 4B, 9B, 27B, and 35B-A3B options.
+- Image nodes support up to 6 image inputs.
+- Video nodes support up to 3 video-frame inputs.
+- Supports OCR, VQA, captioning, grounding, detection, and custom prompts.
+- Supports JSON-oriented prompting and helper outputs for JSON and bounding boxes.
+- Supports 4-bit and 8-bit loading when the user's Python, CUDA, PyTorch, and bitsandbytes stack is compatible.
+- Includes a cache cleanup node for local VRAM-limited workflows.
+
+### Nodes
+
+- `QwenVL-Smit 图片理解`
+
+  Runs Qwen3-VL image understanding, multi-image reference, OCR, VQA, captioning, grounding, detection, or custom analysis. Supports `图片1` through `图片6`.
+
+- `QwenVL-Smit 视频理解`
+
+  Runs Qwen3-VL video-frame understanding from ComfyUI IMAGE batches. Supports `视频帧1` through `视频帧3`.
+
+- `Qwen3.5-Smit 文本对话`
+
+  Runs text-only chat with a Qwen3.5 model.
+
+- `Qwen3.5-Smit 图片理解`
+
+  Runs image or multi-image understanding with a Qwen3.5 model. Supports `图片1` through `图片6`.
+
+- `Qwen3.5-Smit 视频理解`
+
+  Runs video-frame understanding with a Qwen3.5 model. Supports `视频帧1` through `视频帧3`.
+
+- `QwenVL-Smit 提示词预设`
+
+  Builds reusable prompt text only. It does not load a model or run inference.
+
+- `QwenVL-Smit 清理缓存`
+
+  Clears the in-process model cache and attempts to release CUDA cache.
+
+### Installation
+
+#### ComfyUI Manager
+
+Install the current GitHub version through ComfyUI Manager's Git URL installer:
+
+1. Open ComfyUI Manager.
+2. Choose `Install via Git URL` or `Install from Git URL`.
 3. Paste:
 
 ```text
 https://github.com/jiuman994/Qwenvl-Smit
 ```
 
-4. Restart ComfyUI
+4. Restart ComfyUI.
 
-发布到 GitHub 后，其他用户可以通过 ComfyUI Manager 的 Git URL 安装。节点代码没有硬编码任何本机路径，会跟随用户自己的 `ComfyUI/custom_nodes/Qwenvl-Smit` 安装目录加载。
+To make the node appear directly in Manager search results, the repository still needs to be submitted to the ComfyUI Manager custom node list or Comfy Registry. This project already includes `node_list.json` and `pyproject.toml` metadata for that step.
 
-### Manual Install
+#### Manual Install
 
-Clone this repository into `ComfyUI/custom_nodes`:
+Clone the repository into `ComfyUI/custom_nodes`:
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -84,206 +317,75 @@ pip install -r requirements.txt
 
 Restart ComfyUI after installation.
 
-安装完成后请重启 ComfyUI。
+### Recommended Environment
 
-## Recommended Environment / 推荐环境
-
-Recommended environment:
-
-- Python `3.10` or newer
-- CUDA-enabled PyTorch for GPU inference
-- GPU VRAM: 8GB or higher
+- Python `3.10` or newer.
+- CUDA-enabled PyTorch for GPU inference.
+- Recommended GPU VRAM: 8GB or higher.
 - `transformers>=4.57.0`
-- `qwen-vl-utils[decord]>=0.0.14`
+- `qwen-vl-utils>=0.0.14`
 - `accelerate>=1.0.0`
 - `huggingface_hub>=0.34.0`
-- `bitsandbytes` is optional but recommended for 4-bit / 8-bit loading
+- `bitsandbytes` is optional and only used when the local environment supports 4-bit or 8-bit loading.
 
-### VRAM Guide / 显存建议
+### VRAM Guide
 
-The dropdown intentionally avoids very large models because most local ComfyUI users are limited by VRAM.
-
-模型下拉框会主动避开过大的模型，因为大多数本地 ComfyUI 环境都受显存限制。
+The default model dropdown avoids very large models that are unrealistic for most local ComfyUI users.
 
 | VRAM | Qwen3-VL practical maximum | Qwen3.5 practical maximum | Suggested settings |
 | --- | --- | --- | --- |
-| 8GB | 4B, preferably 4-bit | 4B or 9B with 4-bit | `4bit`, 16-32 video frames |
-| 16GB | 8B with 4-bit or FP8 | 9B or 27B with 4-bit | `4bit` or FP8 models |
-| 24GB | 8B comfortably | 27B or 35B-A3B with 4-bit | `4bit`, reduce video frames if needed |
+| 8GB | 4B | 4B or 9B | Prefer `4bit`; keep video around 16 to 32 frames |
+| 16GB | 8B | 9B or 27B | Prefer `4bit`; reduce image count and video frames |
+| 24GB | 8B | 27B or 35B-A3B | Prefer `4bit`; still reduce frames for complex video tasks |
 
-Qwen3-VL exposes only 4B and 8B model presets. Qwen3.5 exposes 4B, 9B, 27B, and 35B-A3B presets. Larger 30B/32B/100B+ style models are intentionally not shown in the default UI.
+Actual usability depends on resolution, image count, video frame count, system memory usage, PyTorch version, and quantization compatibility.
 
-Qwen3-VL 默认只展示 4B 和 8B。Qwen3.5 默认展示 4B、9B、27B、35B-A3B。30B/32B/100B+ 这类对本地 ComfyUI 用户不现实的模型不会出现在默认列表里。
-
-## Model Selection / 模型选择
+### Model Folders
 
 Each functional node has its own `模型` dropdown:
 
-1. Local models detected in ComfyUI model folders are listed first.
+1. Local models found in ComfyUI model folders are listed first.
 2. Supported Hugging Face model IDs are listed after local models.
-3. If a selected Hugging Face model is not local yet, it downloads into the matching ComfyUI model folder.
+3. If a selected Hugging Face model is not available locally, it downloads into the matching ComfyUI model folder.
 
-每个功能节点都内置一个 `模型` 下拉框：
-
-1. 优先显示已经放在 ComfyUI 模型目录里的本地模型。
-2. 本地模型后面显示支持的 Hugging Face 模型。
-3. 如果选择的 Hugging Face 模型还没有下载，会自动下载到对应的 ComfyUI 模型目录。
-
-Recommended local model layout:
+Recommended Qwen3-VL folder:
 
 ```text
-ComfyUI/
-  models/
-    LLM/
-      Qwen-VL/
-        Qwen3-VL-4B-Instruct/
-          config.json
-          model.safetensors.index.json
-          model-00001-of-000xx.safetensors
-          ...
+ComfyUI/models/LLM/Qwen-VL/model-folder
 ```
 
-推荐把本地模型放在：
+Recommended Qwen3.5 folder:
 
 ```text
-ComfyUI/models/LLM/Qwen-VL/模型文件夹
+ComfyUI/models/LLM/Qwen3.5/model-folder
 ```
 
-The node also scans common existing folders when present:
+The node also scans common existing model folders when available:
 
 ```text
 ComfyUI/models/LLM/Qwen-VL
+ComfyUI/models/LLM/Qwen3.5
 ComfyUI/models/LLM
 ComfyUI/models/VQA
 ComfyUI/models/hugface
 ComfyUI/models/transformers
 ```
 
-节点会优先读取 ComfyUI 自己的模型目录。只有本地没有可用模型时，才会使用 Hugging Face 模型 ID 自动下载。默认下载位置也是 `ComfyUI/models/LLM/Qwen-VL/模型文件夹`，更接近现有 QwenVL 节点的习惯。
+### Notes
 
-Examples:
+- Start with a 4B model on 8GB GPUs.
+- Video nodes expect ComfyUI IMAGE frame batches and do not decode video files directly.
+- Some Hugging Face models may require `huggingface-cli login`.
+- Downloaded models are stored under the matching ComfyUI model folder.
 
-```text
-Qwen/Qwen3-VL-4B-Instruct
-ComfyUI/models/LLM/Qwen-VL/Qwen3-VL-4B-Instruct
-```
+### Credits
 
-Qwen3.5 uses separate nodes and a separate recommended local folder:
+This extension is an integration layer and does not include Qwen model weights.
 
-```text
-ComfyUI/models/LLM/Qwen3.5/Qwen3.5-4B
-```
+Qwen3-VL and Qwen3.5 models are provided by the Qwen team. Qwenvl-Smit adapts those models for local ComfyUI workflows with Chinese UI labels, local model-folder discovery, multi-image inputs, video-frame inputs, JSON helper outputs, and local-friendly model presets. Please follow the license and use policy of the selected upstream Qwen model.
 
-Qwen3.5 使用独立节点，推荐本地模型目录：
+Qwenvl-Smit node code is released under Apache-2.0.
 
-```text
-ComfyUI/models/LLM/Qwen3.5/模型文件夹
-```
-
-Both Qwen3-VL and Qwen3.5 nodes use `transformers.AutoModelForImageTextToText` plus `AutoProcessor`, matching the multimodal model interface. The Qwen3.5 chat node simply runs the same model in text-only mode.
-
-Qwen3-VL 和 Qwen3.5 节点都使用 `transformers.AutoModelForImageTextToText` 与 `AutoProcessor`。Qwen3.5 文本对话节点只是把同一个多模态模型按纯文本方式调用。
-
-## Prompt Preset Node / 提示词预设节点
-
-`QwenVL-Smit 提示词预设` does not run a model. It only outputs reusable prompt text for common tasks such as image captioning, OCR, visual question answering, object detection, grounding, and JSON output.
-
-`QwenVL-Smit 提示词预设` 不会加载或运行模型，它只是输出一段可复用的提示词。适合以下情况：
-
-- 多个节点复用同一种任务描述。
-- 想把“任务类型”和“补充要求”拆出来，让主节点更干净。
-- 想快速生成 OCR、视觉问答、目标检测、目标定位、JSON 结构化输出等提示词。
-
-If you prefer simple workflows, you can ignore this node and write prompts directly inside the image, video, or chat nodes.
-
-如果你喜欢简单工作流，可以完全不使用这个节点，直接在图片、视频或文本节点里填写提示词。
-
-## Basic Workflows / 基础工作流
-
-Image OCR:
-
-```text
-Load Image -> QwenVL-Smit 图片理解
-任务类型: OCR文字识别
-提示词: 提取图片中的全部文字。
-```
-
-Multi-image:
-
-```text
-Load Image -> 图片1
-Load Image -> 图片2
-Load Image -> 图片3
-QwenVL-Smit 图片理解
-```
-
-Visual question answering:
-
-```text
-Load Image -> QwenVL-Smit 图片理解
-任务类型: 视觉问答
-提示词: 画面主体是什么？它正在做什么？
-```
-
-Detection / grounding:
-
-```text
-Load Image -> QwenVL-Smit 图片理解
-任务类型: 目标检测
-强制JSON: true
-提示词: 检测画面中所有可见的商品包装，返回类别和坐标。
-```
-
-Video understanding:
-
-```text
-Load Video frames as IMAGE batch -> QwenVL-Smit 视频理解
-任务类型: 图像描述
-最大帧数: 32
-提示词: 总结这个视频的时间线。
-```
-
-## Outputs / 输出
-
-`QwenVL-Smit 图片理解` and `QwenVL-Smit 视频理解` return:
-
-- `文本`: raw model answer
-- `JSON`: parsed JSON if the answer contains valid JSON
-- `坐标JSON`: helper extraction for simple `[x1, y1, x2, y2]` or `<box>...</box>` patterns
-
-The model controls the final answer format. For stricter output, enable `强制JSON` and describe the schema in the prompt.
-
-最终输出格式仍由模型生成决定。如果需要更严格的结构化结果，请开启 `force_json` 并在提示词里写清楚 schema。
-
-## Notes / 注意事项
-
-- Large QwenVL models can require substantial VRAM. Start with the 4B model on 8GB GPUs.
-- `bitsandbytes` support depends on Python, CUDA, PyTorch, and platform compatibility.
-- Video input is expected as a ComfyUI `IMAGE` batch. Use existing video loader nodes to decode videos into frames.
-- Model downloads are stored under the matching ComfyUI model folder.
-- Some gated models may require `huggingface-cli login`.
-
-## Model Sources and Credits / 模型来源与声明
-
-This ComfyUI extension is an integration layer. It does not include Qwen model weights.
-
-本项目只是 ComfyUI 节点适配层，不包含任何 Qwen 模型权重。
-
-- Qwen3-VL models are provided by the Qwen team on Hugging Face, such as `Qwen/Qwen3-VL-4B-Instruct` and `Qwen/Qwen3-VL-8B-Instruct`.
-- Qwen3.5 models are provided by the Qwen team on Hugging Face, such as `Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-9B`, `Qwen/Qwen3.5-27B`, and `Qwen/Qwen3.5-35B-A3B`.
-- Qwenvl-Smit adapts those models for local ComfyUI workflows, with simplified Chinese UI labels, ComfyUI model-folder discovery, multi-image inputs, video-frame inputs, JSON helper outputs, and local-friendly model presets.
-- Please follow the license and use policy of the selected upstream Qwen model. Qwenvl-Smit itself is released under Apache-2.0.
-
-Qwen3-VL 与 Qwen3.5 模型由 Qwen 团队提供。本项目在这些模型的基础上做 ComfyUI 节点适配，包括中文界面、本地模型目录识别、多图输入、视频帧输入、JSON 辅助输出和适合本地显存的模型列表。使用模型时请遵守对应 Qwen 模型的开源协议与使用政策；Qwenvl-Smit 节点代码本身使用 Apache-2.0。
-
-## Development / 开发
-
-Run a syntax check:
-
-```bash
-python -m py_compile __init__.py nodes.py
-```
-
-## License / 许可证
+## License
 
 Apache-2.0. See [LICENSE](LICENSE).
