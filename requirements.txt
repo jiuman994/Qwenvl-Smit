@@ -1,0 +1,10 @@
+transformers>=4.57.0
+accelerate>=1.0.0
+huggingface_hub>=0.34.0
+qwen-vl-utils[decord]>=0.0.14
+pillow>=10.0.0
+numpy>=1.26.0
+safetensors>=0.4.5
+
+# Optional, recommended for 8GB GPUs when your Python/CUDA build supports it:
+# bitsandbytes>=0.45.0
