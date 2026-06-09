@@ -6,11 +6,16 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Qwenvl-Smit contributors" }]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
 dependencies = [
   "transformers>=4.57.0",
   "accelerate>=1.0.0",
   "huggingface_hub>=0.34.0",
-  "qwen-vl-utils[decord]>=0.0.14",
+  "qwen-vl-utils>=0.0.14",
   "pillow>=10.0.0",
   "numpy>=1.26.0",
   "safetensors>=0.4.5",
@@ -19,6 +24,11 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/jiuman994/Qwenvl-Smit"
 Repository = "https://github.com/jiuman994/Qwenvl-Smit"
+
+[tool.comfy]
+PublisherId = "jiuman994"
+DisplayName = "Qwenvl-Smit"
+Icon = ""
 
 [tool.black]
 line-length = 100
