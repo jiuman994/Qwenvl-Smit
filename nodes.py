@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - Allows basic import outside ComfyUI.
 
 NODE_CATEGORY = "QwenVL-Smit"
 DEFAULT_MODEL = "Qwen3-VL-4B-Instruct"
+DEFAULT_DTYPE = "bfloat16"
 LEGACY_QWENVL_DIR = os.path.join("LLM", "Qwen-VL")
 DEFAULT_IMAGE_MIN_PIXELS = 3136
 DEFAULT_IMAGE_MAX_PIXELS = 1003520
@@ -50,13 +51,12 @@ TASK_PRESETS = {
         "available coordinates or bounding boxes."
     ),
     "目标检测": (
-        "Detect the requested objects. Return JSON with an objects array. Each object should "
-        "include label, confidence if known, and bbox if available."
+        "Detect the requested objects. Describe each object clearly and include coordinates if available."
     ),
-    "JSON结构化输出": "Return only valid JSON that matches the user's requested schema.",
 }
 
 MODEL_CACHE: Dict[str, "QwenVLModelBundle"] = {}
+SEED_STATE: Dict[str, int] = {}
 
 
 class AnyType(str):
@@ -326,11 +326,11 @@ def _vl_model_choices() -> List[str]:
     return sorted(list(dict.fromkeys(local_models + presets)), key=_model_sort_key)
 
 
-def _load_selected_vl_bundle(模型, 精度, 设备, 量化, 注意力模式) -> QwenVLModelBundle:
+def _load_selected_vl_bundle(模型, 设备, 量化, 注意力模式) -> QwenVLModelBundle:
     return _load_model(
         _resolve_selected_vl_model(模型),
         "",
-        _ui_dtype(精度),
+        DEFAULT_DTYPE,
         _ui_device_map(设备),
         _ui_quantization(量化),
         _ui_attention(注意力模式),
@@ -538,68 +538,30 @@ def _select_frames(images: List[Image.Image], max_frames: int) -> List[Image.Ima
     return [images[i] for i in indexes]
 
 
-def _combine_prompt(task_preset: str, prompt: str, force_json: bool) -> str:
+def _combine_prompt(task_preset: str, prompt: str, language: str) -> str:
     preset = TASK_PRESETS.get(task_preset, "")
     prompt = (prompt or "").strip()
     parts = [part for part in [preset, prompt] if part]
     combined = "\n\n".join(parts) if parts else "Describe the visual content."
-    if force_json and "json" not in combined.lower():
-        combined += "\n\nReturn only valid JSON."
+    if language == "English":
+        combined += "\n\nPlease answer in English."
+    else:
+        combined += "\n\n请使用中文回答。"
     return combined
 
 
-def _parse_history(history_json: str) -> List[Dict[str, Any]]:
-    history_json = (history_json or "").strip()
-    if not history_json:
-        return []
-    try:
-        parsed = json.loads(history_json)
-    except json.JSONDecodeError as exc:
-        raise ValueError("history_json must be valid JSON.") from exc
-    if not isinstance(parsed, list):
-        raise ValueError("history_json must be a JSON array of chat messages.")
-    return parsed
-
-
-def _extract_json(text: str) -> str:
-    text = (text or "").strip()
-    if not text:
-        return ""
-    try:
-        return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if fenced:
-        candidate = fenced.group(1).strip()
-        try:
-            return json.dumps(json.loads(candidate), ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    start = min([i for i in [text.find("{"), text.find("[")] if i >= 0], default=-1)
-    if start >= 0:
-        for end in range(len(text), start, -1):
-            candidate = text[start:end].strip()
-            try:
-                return json.dumps(json.loads(candidate), ensure_ascii=False, indent=2)
-            except Exception:
-                continue
-    return ""
-
-
-def _extract_boxes(text: str) -> str:
-    boxes = []
-    patterns = [
-        r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]",
-        r"<box>\s*\(?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)?\s*</box>",
-    ]
-    for pattern in patterns:
-        for match in re.finditer(pattern, text or "", re.IGNORECASE):
-            values = [float(v) for v in match.groups()]
-            boxes.append({"bbox": values})
-    return json.dumps({"boxes": boxes}, ensure_ascii=False, indent=2) if boxes else ""
+def _resolve_seed(seed_mode: str, seed: int, state_key: str) -> int:
+    if seed_mode == "随机":
+        return int.from_bytes(os.urandom(4), "big")
+    if seed_mode == "递增":
+        current = SEED_STATE.get(state_key, seed)
+        SEED_STATE[state_key] = (current + 1) & 0xFFFFFFFF
+        return current
+    if seed_mode == "递减":
+        current = SEED_STATE.get(state_key, seed)
+        SEED_STATE[state_key] = (current - 1) & 0xFFFFFFFF
+        return current
+    return seed
 
 
 def _build_visual_content(
@@ -633,7 +595,6 @@ def _run_generation(
     images: List[Image.Image],
     prompt: str,
     system_prompt: str,
-    history_json: str,
     mode: str,
     fps: float,
     min_pixels: int,
@@ -641,7 +602,9 @@ def _run_generation(
     max_new_tokens: int,
     temperature: float,
     top_p: float,
+    seed_mode: str,
     seed: int,
+    seed_key: str,
 ) -> str:
     _require_torch()
     try:
@@ -651,15 +614,15 @@ def _run_generation(
             "Missing qwen-vl-utils. Install requirements.txt in the ComfyUI Python environment."
         ) from exc
 
-    if seed >= 0:
-        torch.manual_seed(seed)
+    resolved_seed = _resolve_seed(seed_mode, seed, seed_key)
+    if resolved_seed >= 0:
+        torch.manual_seed(resolved_seed)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+            torch.cuda.manual_seed_all(resolved_seed)
 
     messages = []
     if system_prompt.strip():
         messages.append({"role": "system", "content": system_prompt.strip()})
-    messages.extend(_parse_history(history_json))
     user_content: Any
     if images:
         user_content = _build_visual_content(images, prompt, mode, fps, min_pixels, max_pixels)
@@ -741,7 +704,6 @@ class QwenVLSmitModelLoader:
         return {
             "required": {
                 "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
                 "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
@@ -756,7 +718,6 @@ class QwenVLSmitModelLoader:
     def load(
         self,
         模型,
-        精度,
         设备,
         量化,
         注意力模式,
@@ -765,7 +726,7 @@ class QwenVLSmitModelLoader:
         bundle = _load_model(
             model_id,
             "",
-            _ui_dtype(精度),
+            DEFAULT_DTYPE,
             _ui_device_map(设备),
             _ui_quantization(量化),
             _ui_attention(注意力模式),
@@ -787,19 +748,18 @@ class QwenVLSmitImage:
         return {
             "required": {
                 "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
                 "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
+                "输出语言": (["中文", "English"], {"default": "中文"}),
                 "任务类型": (list(TASK_PRESETS.keys()), {"default": "自定义"}),
                 "提示词": ("STRING", {"default": "请回答我的问题。", "multiline": True}),
                 "系统提示词": ("STRING", {"default": "你是一个有帮助的智能问答助手。", "multiline": True}),
-                "历史记录JSON": ("STRING", {"default": "", "multiline": True}),
-                "强制JSON": ("BOOLEAN", {"default": False}),
                 "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
                 "温度": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "核采样": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "随机种子": ("INT", {"default": -1, "min": -1, "max": 0xFFFFFFFF, "step": 1}),
+                "top_p": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "种子模式": (["固定", "随机", "递增", "递减"], {"default": "固定"}),
+                "随机种子": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFF, "step": 1}),
             },
             "optional": {
                 "图片1": ("IMAGE",),
@@ -811,26 +771,25 @@ class QwenVLSmitImage:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("文本", "JSON", "坐标JSON")
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("文本",)
     FUNCTION = "analyze"
     CATEGORY = NODE_CATEGORY
 
     def analyze(
         self,
         模型,
-        精度,
         设备,
         量化,
         注意力模式,
+        输出语言,
         任务类型,
         提示词,
         系统提示词,
-        历史记录JSON,
-        强制JSON,
         最大输出Token,
         温度,
-        核采样,
+        top_p,
+        种子模式,
         随机种子,
         图片1=None,
         图片2=None,
@@ -840,24 +799,25 @@ class QwenVLSmitImage:
         图片6=None,
     ):
         pil_images = _collect_pil_images(图片1, 图片2, 图片3, 图片4, 图片5, 图片6)
-        final_prompt = _combine_prompt(任务类型, 提示词, 强制JSON)
-        bundle = _load_selected_vl_bundle(模型, 精度, 设备, 量化, 注意力模式)
+        final_prompt = _combine_prompt(任务类型, 提示词, 输出语言)
+        bundle = _load_selected_vl_bundle(模型, 设备, 量化, 注意力模式)
         text = _run_generation(
             bundle,
             pil_images,
             final_prompt,
             系统提示词,
-            历史记录JSON,
             "image",
             1.0,
             DEFAULT_IMAGE_MIN_PIXELS,
             DEFAULT_IMAGE_MAX_PIXELS,
             最大输出Token,
             温度,
-            核采样,
+            top_p,
+            种子模式,
             随机种子,
+            "image",
         )
-        return (text, _extract_json(text), _extract_boxes(text))
+        return (text,)
 
 
 class QwenVLSmitVideo:
@@ -867,22 +827,21 @@ class QwenVLSmitVideo:
         return {
             "required": {
                 "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
-                "精度": (["自动", "bfloat16", "float16", "float32"], {"default": "bfloat16"}),
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
                 "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
                 "视频帧1": ("IMAGE",),
+                "输出语言": (["中文", "English"], {"default": "中文"}),
                 "任务类型": (list(TASK_PRESETS.keys()), {"default": "自定义"}),
                 "提示词": ("STRING", {"default": "请描述这个视频。", "multiline": True}),
                 "系统提示词": ("STRING", {"default": "你是一个有帮助的视频理解助手。", "multiline": True}),
-                "历史记录JSON": ("STRING", {"default": "", "multiline": True}),
-                "强制JSON": ("BOOLEAN", {"default": False}),
                 "帧率": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 60.0, "step": 0.01}),
                 "最大帧数": ("INT", {"default": 32, "min": 1, "max": 512, "step": 1}),
                 "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
                 "温度": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "核采样": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "随机种子": ("INT", {"default": -1, "min": -1, "max": 0xFFFFFFFF, "step": 1}),
+                "top_p": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "种子模式": (["固定", "随机", "递增", "递减"], {"default": "固定"}),
+                "随机种子": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFF, "step": 1}),
             },
             "optional": {
                 "视频帧2": ("IMAGE",),
@@ -890,52 +849,52 @@ class QwenVLSmitVideo:
             },
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("文本", "JSON", "坐标JSON")
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("文本",)
     FUNCTION = "analyze"
     CATEGORY = NODE_CATEGORY
 
     def analyze(
         self,
         模型,
-        精度,
         设备,
         量化,
         注意力模式,
         视频帧1,
+        输出语言,
         任务类型,
         提示词,
         系统提示词,
-        历史记录JSON,
-        强制JSON,
         帧率,
         最大帧数,
         最大输出Token,
         温度,
-        核采样,
+        top_p,
+        种子模式,
         随机种子,
         视频帧2=None,
         视频帧3=None,
     ):
         pil_frames = _select_frames(_collect_pil_images(视频帧1, 视频帧2, 视频帧3), 最大帧数)
-        final_prompt = _combine_prompt(任务类型, 提示词, 强制JSON)
-        bundle = _load_selected_vl_bundle(模型, 精度, 设备, 量化, 注意力模式)
+        final_prompt = _combine_prompt(任务类型, 提示词, 输出语言)
+        bundle = _load_selected_vl_bundle(模型, 设备, 量化, 注意力模式)
         text = _run_generation(
             bundle,
             pil_frames,
             final_prompt,
             系统提示词,
-            历史记录JSON,
             "video",
             帧率,
             DEFAULT_IMAGE_MIN_PIXELS,
             DEFAULT_VIDEO_MAX_PIXELS,
             最大输出Token,
             温度,
-            核采样,
+            top_p,
+            种子模式,
             随机种子,
+            "video",
         )
-        return (text, _extract_json(text), _extract_boxes(text))
+        return (text,)
 
 
 class QwenVLSmitPromptPreset:
@@ -944,8 +903,8 @@ class QwenVLSmitPromptPreset:
         return {
             "required": {
                 "任务类型": (list(TASK_PRESETS.keys()), {"default": "图像描述"}),
+                "输出语言": (["中文", "English"], {"default": "中文"}),
                 "补充要求": ("STRING", {"default": "", "multiline": True}),
-                "强制JSON": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -954,8 +913,8 @@ class QwenVLSmitPromptPreset:
     FUNCTION = "build"
     CATEGORY = NODE_CATEGORY
 
-    def build(self, 任务类型, 补充要求, 强制JSON):
-        return (_combine_prompt(任务类型, 补充要求, 强制JSON),)
+    def build(self, 任务类型, 输出语言, 补充要求):
+        return (_combine_prompt(任务类型, 补充要求, 输出语言),)
 
 
 class QwenVLSmitUnload:
