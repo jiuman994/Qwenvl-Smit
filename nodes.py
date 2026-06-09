@@ -496,6 +496,24 @@ def _cache_key(
     )
 
 
+def _raise_transformers_load_error(exc: Exception, model_id: str) -> None:
+    message = str(exc)
+    if "does not recognize this architecture" in message or "qwen3_5" in message:
+        raise RuntimeError(
+            f"QwenVL-Smit 无法加载模型架构：{model_id}\n\n"
+            "这不是 ComfyUI 没有热刷新模型导致的问题。模型已经被读取到 config.json，"
+            "但当前 ComfyUI Python 环境中的 transformers 还不认识该模型架构。\n\n"
+            "处理方式：\n"
+            "1. 先尝试升级 transformers：python -m pip install -U transformers\n"
+            "2. 如果仍然报 qwen3_5 不识别，说明当前正式版 transformers 还没包含该架构，"
+            "需要安装源码版：python -m pip install -U git+https://github.com/huggingface/transformers.git\n"
+            "3. 安装完成后必须完全重启 ComfyUI。\n\n"
+            "便携包用户请使用 ComfyUI 自带的 Python 执行上面的 pip 命令，不要用系统 Python。\n\n"
+            f"原始错误：{type(exc).__name__}: {exc}"
+        ) from exc
+    raise exc
+
+
 def _load_model(
     model_id: str,
     cache_dir: str,
@@ -556,8 +574,11 @@ def _load_model(
         else:
             kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
-    processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
-    model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
+    try:
+        processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
+        model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
+    except Exception as exc:
+        _raise_transformers_load_error(exc, model_id)
     model.eval()
 
     bundle = QwenVLModelBundle(
@@ -632,8 +653,11 @@ def _load_qwen35_model(
         else:
             kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
 
-    processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
-    model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
+    try:
+        processor = AutoProcessor.from_pretrained(model_id, **processor_kwargs)
+        model = AutoModelForImageTextToText.from_pretrained(model_id, **kwargs)
+    except Exception as exc:
+        _raise_transformers_load_error(exc, model_id)
     model.eval()
 
     bundle = Qwen35ModelBundle(
