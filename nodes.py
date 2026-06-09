@@ -25,22 +25,20 @@ except Exception:  # pragma: no cover - Allows basic import outside ComfyUI.
 
 
 NODE_CATEGORY = "QwenVL-Smit"
-DEFAULT_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
+DEFAULT_MODEL = "Qwen3-VL-4B-Instruct"
 LEGACY_QWENVL_DIR = os.path.join("LLM", "Qwen-VL")
 DEFAULT_IMAGE_MIN_PIXELS = 3136
 DEFAULT_IMAGE_MAX_PIXELS = 1003520
 DEFAULT_VIDEO_MAX_PIXELS = 200704
 
 MODEL_PRESETS = [
-    "Qwen/Qwen3-VL-4B-Instruct",
-    "Qwen/Qwen3-VL-4B-Thinking",
-    "Qwen/Qwen3-VL-4B-Instruct-FP8",
-    "Qwen/Qwen3-VL-4B-Thinking-FP8",
-    "Qwen/Qwen3-VL-8B-Instruct",
-    "Qwen/Qwen3-VL-8B-Thinking",
-    "Qwen/Qwen3-VL-8B-Instruct-FP8",
-    "Qwen/Qwen3-VL-8B-Thinking-FP8",
+    "Qwen3-VL-4B-Instruct",
+    "Qwen3-VL-4B-Thinking",
+    "Qwen3-VL-8B-Instruct",
+    "Qwen3-VL-8B-Thinking",
 ]
+
+MODEL_PRESET_IDS = {name: f"Qwen/{name}" for name in MODEL_PRESETS}
 
 TASK_PRESETS = {
     "自定义": "",
@@ -171,8 +169,16 @@ def _dedupe_model_map(items) -> Dict[str, str]:
     return result
 
 
+def _model_sort_key(name: str):
+    lowered = name.lower()
+    size_match = re.search(r"(\d+(?:\.\d+)?)\s*b", lowered)
+    size = float(size_match.group(1)) if size_match else 9999.0
+    kind = 0 if "instruct" in lowered else 1 if "thinking" in lowered else 2
+    return (size, kind, lowered)
+
+
 def _list_comfy_qwen_vl_models() -> List[str]:
-    return sorted(_local_model_map().keys(), key=str.lower)
+    return sorted(_local_model_map().keys(), key=_model_sort_key)
 
 
 def _resolve_comfy_model_name(model_name: str) -> str:
@@ -289,12 +295,17 @@ def _resolve_selected_vl_model(model_name: str) -> str:
     local_path = _resolve_comfy_model_name(model_name)
     if local_path:
         return local_path
+    if model_name in MODEL_PRESET_IDS:
+        local_repo = _find_repo_in_local_models(MODEL_PRESET_IDS[model_name])
+        if local_repo:
+            return local_repo
+        return _ensure_repo_in_comfy_models(MODEL_PRESET_IDS[model_name])
     if _is_repo_id(model_name):
         local_repo = _find_repo_in_local_models(model_name)
         if local_repo:
             return local_repo
         return _ensure_repo_in_comfy_models(model_name)
-    return _ensure_repo_in_comfy_models(DEFAULT_MODEL)
+    return _ensure_repo_in_comfy_models(MODEL_PRESET_IDS[DEFAULT_MODEL])
 
 
 def _vl_model_choices() -> List[str]:
@@ -302,9 +313,9 @@ def _vl_model_choices() -> List[str]:
     local_keys = {name.lower() for name in local_models}
     presets = [
         preset for preset in MODEL_PRESETS
-        if _hf_repo_folder_name(preset).lower() not in local_keys
+        if preset.lower() not in local_keys
     ]
-    return list(dict.fromkeys(local_models + presets))
+    return sorted(list(dict.fromkeys(local_models + presets)), key=_model_sort_key)
 
 
 def _load_selected_vl_bundle(模型, 精度, 设备, 量化, 注意力模式) -> QwenVLModelBundle:
@@ -632,9 +643,6 @@ def _run_generation(
             "Missing qwen-vl-utils. Install requirements.txt in the ComfyUI Python environment."
         ) from exc
 
-    if not images:
-        raise ValueError("At least one IMAGE input is required.")
-
     if seed >= 0:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -644,10 +652,15 @@ def _run_generation(
     if system_prompt.strip():
         messages.append({"role": "system", "content": system_prompt.strip()})
     messages.extend(_parse_history(history_json))
+    user_content: Any
+    if images:
+        user_content = _build_visual_content(images, prompt, mode, fps, min_pixels, max_pixels)
+    else:
+        user_content = prompt.strip() or "请回答用户的问题。"
     messages.append(
         {
             "role": "user",
-            "content": _build_visual_content(images, prompt, mode, fps, min_pixels, max_pixels),
+            "content": user_content,
         }
     )
 
@@ -656,18 +669,25 @@ def _run_generation(
         tokenize=False,
         add_generation_prompt=True,
     )
-    image_inputs, video_inputs, video_kwargs = process_vision_info(
-        messages,
-        return_video_kwargs=True,
-    )
-    inputs = bundle.processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-        **video_kwargs,
-    )
+    if images:
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+            messages,
+            return_video_kwargs=True,
+        )
+        inputs = bundle.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+            **video_kwargs,
+        )
+    else:
+        inputs = bundle.processor(
+            text=[text],
+            padding=True,
+            return_tensors="pt",
+        )
 
     target_device = None
     if hasattr(bundle.model, "device"):
@@ -763,10 +783,9 @@ class QwenVLSmitImage:
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
                 "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
-                "图片1": ("IMAGE",),
                 "任务类型": (list(TASK_PRESETS.keys()), {"default": "自定义"}),
-                "提示词": ("STRING", {"default": "请描述这张图片。", "multiline": True}),
-                "系统提示词": ("STRING", {"default": "你是一个有帮助的视觉语言助手。", "multiline": True}),
+                "提示词": ("STRING", {"default": "请回答我的问题。", "multiline": True}),
+                "系统提示词": ("STRING", {"default": "你是一个有帮助的智能问答助手。", "multiline": True}),
                 "历史记录JSON": ("STRING", {"default": "", "multiline": True}),
                 "强制JSON": ("BOOLEAN", {"default": False}),
                 "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
@@ -775,6 +794,7 @@ class QwenVLSmitImage:
                 "随机种子": ("INT", {"default": -1, "min": -1, "max": 0xFFFFFFFF, "step": 1}),
             },
             "optional": {
+                "图片1": ("IMAGE",),
                 "图片2": ("IMAGE",),
                 "图片3": ("IMAGE",),
                 "图片4": ("IMAGE",),
@@ -795,7 +815,6 @@ class QwenVLSmitImage:
         设备,
         量化,
         注意力模式,
-        图片1,
         任务类型,
         提示词,
         系统提示词,
@@ -805,6 +824,7 @@ class QwenVLSmitImage:
         温度,
         核采样,
         随机种子,
+        图片1=None,
         图片2=None,
         图片3=None,
         图片4=None,
@@ -963,7 +983,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "QwenVLSmitImage": "QwenVL-Smit 图片理解",
+    "QwenVLSmitImage": "QwenVL-Smit 智能问答",
     "QwenVLSmitVideo": "QwenVL-Smit 视频理解",
     "QwenVLSmitPromptPreset": "QwenVL-Smit 提示词预设",
     "QwenVLSmitUnload": "QwenVL-Smit 清理缓存",
