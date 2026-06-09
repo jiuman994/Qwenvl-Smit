@@ -59,6 +59,14 @@ TASK_PRESETS = {
 MODEL_CACHE: Dict[str, "QwenVLModelBundle"] = {}
 
 
+class AnyType(str):
+    def __ne__(self, other: object) -> bool:
+        return False
+
+
+ANY_TYPE = AnyType("*")
+
+
 def _register_model_dirs():
     if folder_paths is None:
         return
@@ -953,14 +961,17 @@ class QwenVLSmitPromptPreset:
 class QwenVLSmitUnload:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"清理全部模型缓存": ("BOOLEAN", {"default": True})}}
+        return {
+            "required": {"清理全部模型缓存": ("BOOLEAN", {"default": True})},
+            "optional": {"触发": (ANY_TYPE,)},
+        }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("状态",)
+    RETURN_TYPES = (ANY_TYPE, "STRING")
+    RETURN_NAMES = ("触发", "状态")
     FUNCTION = "unload"
     CATEGORY = NODE_CATEGORY
 
-    def unload(self, 清理全部模型缓存):
+    def unload(self, 清理全部模型缓存, 触发=None):
         if 清理全部模型缓存:
             MODEL_CACHE.clear()
         gc.collect()
@@ -972,7 +983,7 @@ class QwenVLSmitUnload:
                 model_management.soft_empty_cache()
             except Exception:
                 pass
-        return ("QwenVL-Smit 模型缓存已清理。",)
+        return (触发, "QwenVL-Smit 模型缓存已清理。")
 
 
 NODE_CLASS_MAPPINGS = {
