@@ -210,34 +210,25 @@ def _qwen35_model_roots() -> List[str]:
     return [root for root in dict.fromkeys(roots) if os.path.isdir(root)]
 
 
-def _local_model_label(root: str, model_dir: str) -> str:
-    root_name = os.path.basename(os.path.normpath(root))
-    parent_name = os.path.basename(os.path.dirname(os.path.normpath(root)))
-    rel = os.path.relpath(model_dir, root).replace("\\", "/")
-    if root_name == "Qwen-VL" and parent_name == "LLM":
-        return f"LLM/Qwen-VL/{rel}"
-    return f"{root_name}/{rel}"
-
-
 def _iter_local_hf_models():
     for root in _comfy_model_roots():
         for current, dirs, _files in os.walk(root):
             if _looks_like_hf_model_dir(current):
-                label = _local_model_label(root, current)
+                label = os.path.basename(os.path.normpath(current))
                 if "qwen" in label.lower():
                     yield label, current
                 dirs[:] = []
 
 
 def _local_model_map() -> Dict[str, str]:
-    return {label: path for label, path in _iter_local_hf_models()}
+    return _dedupe_model_map(_iter_local_hf_models())
 
 
 def _iter_local_qwen35_models():
     for root in _qwen35_model_roots():
         for current, dirs, _files in os.walk(root):
             if _looks_like_hf_model_dir(current):
-                label = _local_model_label(root, current)
+                label = os.path.basename(os.path.normpath(current))
                 lowered = label.lower()
                 if "qwen3.5" in lowered or "qwen3_5" in lowered or "qwen-3.5" in lowered:
                     yield label, current
@@ -245,7 +236,28 @@ def _iter_local_qwen35_models():
 
 
 def _qwen35_model_map() -> Dict[str, str]:
-    return {label: path for label, path in _iter_local_qwen35_models()}
+    return _dedupe_model_map(_iter_local_qwen35_models())
+
+
+def _dedupe_model_map(items) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    used = set()
+    for label, path in items:
+        clean = os.path.basename(os.path.normpath(label)) or label
+        key = clean.lower()
+        if key in used:
+            parent = os.path.basename(os.path.dirname(os.path.normpath(path)))
+            clean = f"{clean} ({parent})"
+            key = clean.lower()
+        suffix = 2
+        base = clean
+        while key in used:
+            clean = f"{base} #{suffix}"
+            key = clean.lower()
+            suffix += 1
+        used.add(key)
+        result[clean] = path
+    return result
 
 
 def _list_comfy_qwen35_models() -> List[str]:
@@ -425,11 +437,23 @@ def _resolve_selected_qwen35_model(model_name: str) -> str:
 
 
 def _vl_model_choices() -> List[str]:
-    return list(dict.fromkeys(_list_comfy_qwen_vl_models() + MODEL_PRESETS))
+    local_models = _list_comfy_qwen_vl_models()
+    local_keys = {name.lower() for name in local_models}
+    presets = [
+        preset for preset in MODEL_PRESETS
+        if _hf_repo_folder_name(preset).lower() not in local_keys
+    ]
+    return list(dict.fromkeys(local_models + presets))
 
 
 def _qwen35_model_choices() -> List[str]:
-    return list(dict.fromkeys(_list_comfy_qwen35_models() + QWEN35_MODEL_PRESETS))
+    local_models = _list_comfy_qwen35_models()
+    local_keys = {name.lower() for name in local_models}
+    presets = [
+        preset for preset in QWEN35_MODEL_PRESETS
+        if _hf_repo_folder_name(preset).lower() not in local_keys
+    ]
+    return list(dict.fromkeys(local_models + presets))
 
 
 def _load_selected_vl_bundle(模型, 精度, 设备, 量化, 注意力模式) -> QwenVLModelBundle:
@@ -1160,8 +1184,7 @@ def _run_qwen35_chat(
 class QwenVLSmitModelLoader:
     @classmethod
     def INPUT_TYPES(cls):
-        models = _list_comfy_qwen_vl_models() + MODEL_PRESETS
-        models = list(dict.fromkeys(models))
+        models = _vl_model_choices()
         return {
             "required": {
                 "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
@@ -1207,8 +1230,7 @@ class QwenVLSmitModelLoader:
 class Qwen35SmitModelLoader:
     @classmethod
     def INPUT_TYPES(cls):
-        models = _list_comfy_qwen35_models() + QWEN35_MODEL_PRESETS
-        models = list(dict.fromkeys(models))
+        models = _qwen35_model_choices()
         return {
             "required": {
                 "模型": (models, {"default": models[0] if models else DEFAULT_QWEN35_MODEL}),
