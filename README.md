@@ -148,6 +148,8 @@ ComfyUI/models/LLM/Qwen-VL/Qwen3-VL-4B-Instruct
 ComfyUI/models/LLM/Qwen3.5/模型文件夹
 ```
 
+节点下拉栏只显示模型文件夹名或支持的模型 ID，不会显示完整本机路径。如果同名模型同时存在于多个目录，会在名称后追加短标记用于区分。
+
 节点也会尽量扫描一些常见模型目录，例如：
 
 ```text
@@ -259,6 +261,8 @@ ComfyUI/models/LLM/Qwen3.5/模型文件夹
 ### Qwen3.5 架构兼容
 
 如果模型已经下载完成，但运行时出现 `model type qwen3_5` 或 `Transformers does not recognize this architecture`，这通常不是 ComfyUI 没刷新模型目录导致的。它表示当前 ComfyUI Python 环境里的 Transformers 还不认识 Qwen3.5 的模型架构。
+
+例如 `transformers 4.57.x` 可能仍然无法加载 `qwen3_5`。参考实现使用的是 Transformers 5.x 级别的支持。在 Transformers 正式版本支持之前，可以安装源码版，或者改用本项目的 GGUF 节点。
 
 可以先尝试：
 
@@ -457,6 +461,8 @@ Recommended Qwen3.5 folder:
 ComfyUI/models/LLM/Qwen3.5/model-folder
 ```
 
+The dropdown shows only model folder names or supported model IDs, not full local paths. If duplicate folder names are detected in multiple locations, a short suffix is added to distinguish them.
+
 The node also scans common existing model folders when available:
 
 ```text
@@ -512,6 +518,8 @@ ComfyUI/models/LLM/Qwen3.5/model-folder
 ### Qwen3.5 Architecture Support
 
 If the model is already downloaded but the error mentions `model type qwen3_5` or `Transformers does not recognize this architecture`, this is usually not a ComfyUI model-folder refresh issue. It means the Transformers package inside the ComfyUI Python environment does not yet support the Qwen3.5 architecture.
+
+For example, `transformers 4.57.x` may still fail to load `qwen3_5`. The reference implementation uses Transformers 5.x-level support. Until that support is available in a release build, install Transformers from source or use the GGUF node.
 
 Try:
 
