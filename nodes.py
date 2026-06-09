@@ -326,6 +326,10 @@ def _vl_model_choices() -> List[str]:
     return sorted(list(dict.fromkeys(local_models + presets)), key=_model_sort_key)
 
 
+def _default_model_choice(models: List[str]) -> str:
+    return DEFAULT_MODEL if DEFAULT_MODEL in models else models[0] if models else DEFAULT_MODEL
+
+
 def _load_selected_vl_bundle(模型, 设备, 量化, 注意力模式) -> QwenVLModelBundle:
     return _load_model(
         _resolve_selected_vl_model(模型),
@@ -703,9 +707,9 @@ class QwenVLSmitModelLoader:
         models = _vl_model_choices()
         return {
             "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
+                "模型": (models, {"default": _default_model_choice(models)}),
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
+                "量化": (["不量化", "4bit", "8bit"], {"default": "不量化"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
             }
         }
@@ -747,18 +751,18 @@ class QwenVLSmitImage:
         models = _vl_model_choices()
         return {
             "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
+                "模型": (models, {"default": _default_model_choice(models)}),
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
+                "量化": (["不量化", "4bit", "8bit"], {"default": "不量化"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
                 "输出语言": (["中文", "English"], {"default": "中文"}),
                 "任务类型": (list(TASK_PRESETS.keys()), {"default": "自定义"}),
                 "提示词": ("STRING", {"default": "请回答我的问题。", "multiline": True}),
                 "系统提示词": ("STRING", {"default": "你是一个有帮助的智能问答助手。", "multiline": True}),
                 "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
-                "温度": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05}),
+                "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "种子模式": (["固定", "随机", "递增", "递减"], {"default": "固定"}),
+                "种子模式": (["固定", "随机", "递增", "递减"], {"default": "随机"}),
                 "随机种子": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFF, "step": 1}),
             },
             "optional": {
@@ -826,9 +830,9 @@ class QwenVLSmitVideo:
         models = _vl_model_choices()
         return {
             "required": {
-                "模型": (models, {"default": models[0] if models else DEFAULT_MODEL}),
+                "模型": (models, {"default": _default_model_choice(models)}),
                 "设备": (["自动", "CUDA", "CPU"], {"default": "自动"}),
-                "量化": (["不量化", "4bit", "8bit"], {"default": "4bit"}),
+                "量化": (["不量化", "4bit", "8bit"], {"default": "不量化"}),
                 "注意力模式": (["自动", "SDPA", "Flash Attention 2", "Eager"], {"default": "自动"}),
                 "视频帧1": ("IMAGE",),
                 "输出语言": (["中文", "English"], {"default": "中文"}),
@@ -838,9 +842,9 @@ class QwenVLSmitVideo:
                 "帧率": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 60.0, "step": 0.01}),
                 "最大帧数": ("INT", {"default": 32, "min": 1, "max": 512, "step": 1}),
                 "最大输出Token": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
-                "温度": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.05}),
+                "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "种子模式": (["固定", "随机", "递增", "递减"], {"default": "固定"}),
+                "种子模式": (["固定", "随机", "递增", "递减"], {"default": "随机"}),
                 "随机种子": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFF, "step": 1}),
             },
             "optional": {
